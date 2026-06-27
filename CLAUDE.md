@@ -67,7 +67,6 @@ one thing to verify when first cutting a binary.
   are derived from `first_seen`/`last_seen`; the snapshot view reads `snapshots`;
   the storage-health view reads `store_probes`. The crawler writes one `snapshots`
   row per run in `writeSnapshot()` (crawl mode only, gated by `snapshotOnExit`).
-- `commands/store.js` (`store`) — demo of hyperdht BEP44-style put/get (immutable + mutable).
 - `commands/storeprobe.js` (`storeprobe`) — puts canary records and re-polls the closest
   nodes (direct `dht.request` with `COMMANDS.IMMUTABLE_GET` from
   `hyperdht/lib/constants.js`) at checkpoints spanning hyperdht's **~20-min record

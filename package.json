@@ -19,7 +19,6 @@
     "summary": "bare bin.mjs summary",
     "topo": "bare bin.mjs topo",
     "rpki": "bare bin.mjs rpki",
-    "store": "bare bin.mjs store",
     "storeprobe": "bare bin.mjs storeprobe",
     "format": "prettier . --write",
     "lint": "prettier . --check && lunte",

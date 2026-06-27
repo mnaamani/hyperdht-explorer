@@ -116,7 +116,6 @@ above). Until a real link is set, leave updates off.
 | `npm run map`                                           | Render `map.html` — an interactive world map of everything collected.        |
 | `npm run ring`                                          | Render `ring.html` — a circular projection of the Kademlia keyspace.         |
 | `npm run timeline`                                      | Render `timeline.html` — how the network evolves over time.                  |
-| `npm run store -- put/get/mput/mget …`                  | Put/get small records in the DHT (BEP44-style demo).                         |
 | `npm run storeprobe`                                    | Measure DHT storage reliability (canary put/get persistence).                |
 | `npm run summary`                                       | Render `summary.html` — sortable tables of nodes by ASN/operator and /24.    |
 | `npm run topo -- [--refresh]`                           | Render `topology.html` — BGP/AS interconnection of the hosting networks.     |
@@ -290,26 +289,10 @@ RIPEstat rate-limit compliance is built in: every request carries
 concurrent/IP) and spaced, one covering prefix is reused across all the /24s it
 contains, and results are cached (refetched weekly, or with `--refresh`).
 
-### Store (`commands/store.js`)
-
-A demo of hyperdht's BEP44-style record storage — put/get small signed values
-into the DHT (stored on the nodes closest to the key):
-
-```sh
-npm run store -- put  "hello"                 # immutable -> prints hash
-npm run store -- get  <hash-hex>
-npm run store -- mput "status: online" <seed-hex> <seq>   # mutable, signed, updatable
-npm run store -- mget <publicKey-hex>
-```
-
-Records are **soft state**: ~1 KB max, stored on the ~20 closest nodes, and they
-expire in ~20 min unless republished. Mutable records are ed25519-signed with a
-`seq` for compare-and-swap. Useful as a pointer/rendezvous layer (e.g. publish a
-hypercore key), not as storage.
-
 ### Storage probe (`commands/storeprobe.js`)
 
-Uses the put/get primitives to measure the **DHT's storage reliability** — a
+Uses hyperdht's BEP44-style put/get primitives to measure the **DHT's storage
+reliability** — a
 dimension node-pinging can't reveal. It puts N immutable canary records, records
 which closest nodes accepted each, then re-polls those nodes at checkpoints up to
 just past hyperdht's record TTL to build a **decay curve**:

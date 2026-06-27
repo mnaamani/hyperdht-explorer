@@ -28,7 +28,6 @@ const COMMANDS = {
   summary: () => import('./commands/summary.js'),
   topo: () => import('./commands/topo.js'),
   rpki: () => import('./commands/rpki.js'),
-  store: () => import('./commands/store.js'),
   storeprobe: () => import('./commands/storeprobe.js')
 }
 
@@ -48,7 +47,6 @@ commands:
   summary      render summary.html (network tables)
   topo         render topology.html (BGP/AS graph) (--refresh)
   rpki         RIPEstat RPKI validity per /24     (--refresh)
-  store        BEP44 put/get demo                 put|get|mput|mget …
   storeprobe   storage-reliability decay probe    (--canaries N --checkpoints …)
 
 global flags:

@@ -22,7 +22,7 @@ larger architectural follow-on, deliberately deferred.
 - We're already _on_ the network — no extra servers, accounts, or central registry.
 - The pieces map cleanly onto primitives we already use:
   - **`announce` / `lookup`** (see `seeders.js`) → rendezvous: find other explorers.
-  - **mutable records** (`store.js mput/mget`) → each explorer's signed pointer.
+  - **mutable records** (hyperdht's signed BEP44-style put/get) → each explorer's signed pointer.
   - **hypercore replication** → move the actual (large) datasets peer-to-peer.
 
 ## Architecture
@@ -120,6 +120,7 @@ anything under their own key.
 
 - `seeders.js` already demonstrates the announce/lookup rendezvous against a real
   topic — reuse its lookup path.
-- `store.js` already demonstrates mutable put/get — the manifest record mechanism.
+- hyperdht's signed mutable put/get is the manifest record mechanism (`storeprobe.js`
+  exercises the immutable variant of the same DHT storage path).
 - The geo/probe/map/ring/timeline pipeline is unchanged; it just reads a richer,
   merged `nodes.db`.
