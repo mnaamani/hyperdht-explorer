@@ -14,12 +14,12 @@ set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR" || exit 1
 
-# This assumes the `hyperdht-explorer` CLI is INSTALLED on the system (a standalone
-# binary from `npm run make`, or `npm i -g .`) and on PATH. cron starts with a
-# minimal environment, so put the usual install locations on PATH — adjust if the
-# binary lives elsewhere (`command -v hyperdht-explorer` shows where it is).
-export VOLTA_HOME="${VOLTA_HOME:-$HOME/.volta}"
-export PATH="$VOLTA_HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# This assumes the STANDALONE `hyperdht-explorer` binary (`npm run make` →
+# `out/<host>/hyperdht-explorer`) is on PATH. It must be the standalone build:
+# anything run via `bare bin.mjs` is classified DEV and points at the separate
+# `…-dev` data dir, whereas the standalone binary writes to the production data dir.
+# cron starts with a minimal environment — if the binary isn't found, set PATH in
+# your crontab (`command -v hyperdht-explorer` shows where it lives).
 
 SCAN_SECONDS="${SCAN_SECONDS:-120}"   # bounded crawl length; override via env
 LOG="$DIR/scan.log"

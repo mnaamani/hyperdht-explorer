@@ -10,15 +10,19 @@ The wrapper script [`ops/scheduled-scan.sh`](./ops/scheduled-scan.sh) runs one c
 scan (--for 120, writes a snapshot + prunes)  →  geo  →  probe
 ```
 
-> **Prerequisite.** The wrappers call the **installed** `hyperdht-explorer`
-> command directly (not `bare bin.mjs`). Install it first so it's on PATH — either
-> `npm install -g .` or `npm run make` + copy `out/<host>/hyperdht-explorer` onto
-> PATH (see the README's "Installing as a system command").
+> **Prerequisite.** The wrappers call the **installed standalone** `hyperdht-explorer`
+> binary directly (not `bare bin.mjs`). Build it with `npm run make` and copy
+> `out/<host>/hyperdht-explorer` onto PATH (see the README's "Installing as a system
+> command"). It must be the standalone binary: anything run via `bare bin.mjs` is
+> treated as DEV and writes to a separate `…-dev` data dir, so cron would silently
+> collect into the wrong place.
 
-> **Where data lives.** `nodes.db` and the generated `public/*.html` pages are
-> written to the per-user app-data dir (macOS
+> **Where data lives.** Run by the standalone binary, `nodes.db` and the generated
+> `public/*.html` pages are written to the per-user app-data dir (macOS
 > `~/Library/Application Support/hyperdht-explorer/`, Linux
-> `~/.local/share/hyperdht-explorer/`), **not** the repo. `scan.log` and the lock dirs
+> `~/.local/share/hyperdht-explorer/`), **not** the repo. (Local `bare bin.mjs` dev
+> runs use the `…-hyperdht-explorer-dev` sibling instead, so they don't mix with the
+> scheduled production data.) `scan.log` and the lock dirs
 > stay at the repo root (the wrapper `cd`s there; the scripts themselves live in
 > `ops/`). Find the exact data path any time with
 > `hyperdht-explorer help`. The `sqlite3` snippets below assume macOS — adjust the
@@ -28,8 +32,8 @@ It is designed to be driven by **cron**. It:
 
 - resolves the project directory from its own location and `cd`s there (so the
   wrapper, lock, and `scan.log` line up regardless of where cron runs it);
-- sets `PATH` / `VOLTA_HOME` itself, because cron starts with a minimal
-  environment and the installed `hyperdht-explorer` command must be findable
+- relies on the installed `hyperdht-explorer` command being on PATH; cron starts
+  with a minimal environment, so if it isn't found, set `PATH` in your crontab
   (`command -v hyperdht-explorer` shows where it lives);
 - holds a single-instance lock (`.scan.lock`) so a slow cycle never overlaps the
   next one;

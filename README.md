@@ -32,8 +32,9 @@ bare bin.mjs help              # list all commands
 
 ### Where data goes
 
-All runtime state lives **outside the repo**, in a per-user OS app-data
-directory:
+All runtime state lives **outside the repo**, in a per-user OS app-data directory
+(resolved via [`bare-storage`](https://github.com/holepunchto/bare-storage)'s
+`persistent()`):
 
 | OS      | Location                                                                          |
 | ------- | --------------------------------------------------------------------------------- |
@@ -42,15 +43,20 @@ directory:
 | Windows | `%APPDATA%/hyperdht-explorer/`                                                    |
 
 It holds `nodes.db` (SQLite), the generated `public/*.html` pages, and the
-pear-runtime updater store. Override the whole location with `--storage <dir>` or
-the `HYPERDHT_EXPLORER_HOME` env var. Each render command prints the absolute `file://`
+pear-runtime updater store. Each render command prints the absolute `file://`
 path of the page it wrote.
+
+**Dev vs production storage.** The standalone binary (production) uses the
+`hyperdht-explorer` dir above; running via `bare bin.mjs` / `npm run …` (dev) uses a
+distinct **`hyperdht-explorer-dev`** sibling dir, so local hacking never mixes with
+installed/scheduled data. Both are durable (not temp). Override either with
+`--storage <dir>` or the `HYPERDHT_EXPLORER_HOME` env var (both take precedence over
+the dev/prod default).
 
 ### Installing it as a system command
 
 Once `hyperdht-explorer` is on your PATH you can drop the `bare bin.mjs` prefix and
-just run `hyperdht-explorer scan --for 60`. There are three ways to get there,
-proper P2P first:
+just run `hyperdht-explorer scan --for 60`. Two ways to get there, proper P2P first:
 
 **a) Install peer-to-peer (the Pear way).** No clone, no repo — just the published
 `pear://` link:
@@ -66,18 +72,8 @@ the way. It takes a `pear://` link — **not** a local path like `.`.)
 
 **b) Build a self-contained binary.** `npm run make` (host) or `npm run make:<target>`
 (cross) produces `out/<host>/hyperdht-explorer`; copy it somewhere on PATH. No
-`bare` needed at runtime.
-
-**c) Local-repo shortcut (dev convenience).** Inside a clone, symlink the entry so
-you can run it by name while hacking on it:
-
-```sh
-npm install -g .                       # symlinks `hyperdht-explorer` -> bin.mjs (needs `bare` on PATH)
-```
-
-This is the Node-style shortcut, not the distribution mechanism — prefer (a)/(b)
-for real use. Any of the three satisfies the cron wrappers in `ops/`, which assume
-an installed `hyperdht-explorer` command — see [SCHEDULING.md](./SCHEDULING.md).
+`bare` needed at runtime. This standalone binary is what the cron wrappers in `ops/`
+expect — see [SCHEDULING.md](./SCHEDULING.md).
 
 ### Publishing a release (maintainers)
 

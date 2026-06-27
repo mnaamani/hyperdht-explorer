@@ -18,9 +18,6 @@ set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR" || exit 1
 
-export VOLTA_HOME="${VOLTA_HOME:-$HOME/.volta}"
-export PATH="$VOLTA_HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
 OBSERVE_LINK="${OBSERVE_LINK:-pear://17pwkcszz18deaccarhrrixhzf1f5ko1b1dz6j3pxhexebutjwzy}"
 OBSERVE_APP="${OBSERVE_APP:-keet}"
 OBSERVE_MINUTES="${OBSERVE_MINUTES:-20}"

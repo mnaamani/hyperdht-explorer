@@ -1,7 +1,7 @@
-import os from 'bare-os'
 import path from 'bare-path'
 import fs from 'bare-fs'
 import process from 'bare-process'
+import { persistent } from 'bare-storage'
 
 // Resolve where hyperdht-explorer keeps its runtime state — OUTSIDE the repo. The DB
 // and the generated HTML pages all live here, alongside the pear-runtime updater
@@ -9,10 +9,13 @@ import process from 'bare-process'
 //
 // Resolution order:
 //   1. HYPERDHT_EXPLORER_HOME            explicit override (used by tests / CI / cron)
-//   2. OS-conventional app-data dir:
-//        macOS  ~/Library/Application Support/hyperdht-explorer
-//        Linux  $XDG_DATA_HOME/hyperdht-explorer  (default ~/.local/share/hyperdht-explorer)
-//        win32  %APPDATA%/hyperdht-explorer
+//   2. bare-storage `persistent()` (the OS-conventional app-data root — macOS
+//      ~/Library/Application Support, Linux $XDG_DATA_HOME|~/.local/share, win32
+//      %APPDATA%) + an app subdir. The subdir DIFFERS by runtime so a standalone
+//      production build and local `bare bin.mjs` dev runs never share state:
+//        production binary   ->  <persistent>/hyperdht-explorer
+//        dev (`bare bin.mjs`) ->  <persistent>/hyperdht-explorer-dev
+//      Both are durable (NOT temp/ephemeral) — dev is just a distinct directory.
 //
 // bin.mjs may also pass a base dir down (via --storage); when it does, callers
 // should use that instead. These helpers are the default/fallback resolution and
@@ -20,20 +23,16 @@ import process from 'bare-process'
 
 const APP = 'hyperdht-explorer'
 
+// Same dev/prod discriminator bin.mjs uses: dev runs go through the `bare` runtime
+// (argv[0] === 'bare'); a standalone build's argv[0] is the binary itself.
+function isDev() {
+  return path.basename(Bare.argv[0]) === 'bare'
+}
+
 export function dataDir() {
   const override = process.env?.HYPERDHT_EXPLORER_HOME
   if (override) return override
-  const home = os.homedir()
-  const platform = os.platform()
-  let root
-  if (platform === 'win32') {
-    root = process.env?.APPDATA || path.join(home, 'AppData', 'Roaming')
-  } else if (platform === 'darwin') {
-    root = path.join(home, 'Library', 'Application Support')
-  } else {
-    root = process.env?.XDG_DATA_HOME || path.join(home, '.local', 'share')
-  }
-  return path.join(root, APP)
+  return path.join(persistent(), isDev() ? `${APP}-dev` : APP)
 }
 
 export function dbPath() {

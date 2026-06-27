@@ -56,8 +56,13 @@ global flags:
 
 data directory: ${dataDir()}`
 
+// Dev runs as `bare bin.mjs <cmd>` (argv = [bare, script, ...args]); a standalone
+// build runs as `<binary> <cmd>` (argv = [binary, ...args]) with no script slot.
+// Strip the runtime + (dev-only) script path so `raw` starts at the user's args.
+const isDev = path.basename(Bare.argv[0]) === 'bare'
+
 // --- parse: strip global flags from anywhere; first remaining token = command --
-const raw = Bare.argv.slice(2)
+const raw = Bare.argv.slice(isDev ? 2 : 1)
 let updates = false
 let storage = null
 const rest = []
@@ -89,7 +94,6 @@ console.log(
 )
 
 // --- optional OTA updater (best-effort; never blocks the command) -------------
-const isDev = path.basename(Bare.argv[0]) === 'bare'
 let app = null
 if (updates) {
   try {

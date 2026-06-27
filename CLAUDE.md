@@ -43,13 +43,20 @@ dynamically imports `commands/<name>.mjs` and awaits its exported `run(ctx)`. Ea
 command is otherwise a small single-purpose unit sharing one SQLite database.
 `db.mjs` is the only place the schema lives.
 
-**Storage lives OUTSIDE the repo.** `paths.mjs` resolves a per-user OS app-data dir
-(`dataDir()`): macOS `~/Library/Application Support/hyperdht-explorer`, Linux
-`$XDG_DATA_HOME/.../hyperdht-explorer`, Windows `%APPDATA%/hyperdht-explorer` — overridable
-via `HYPERDHT_EXPLORER_HOME` or `--storage`. It holds `nodes.db`, `public/*.html`, and
-the pear-runtime updater store. `openDb()` defaults to `paths.dbPath()` and calls
-`ensureDirs()`; render commands write to `paths.htmlPath('<name>.html')`. Never
-write outputs into the repo cwd.
+**Storage lives OUTSIDE the repo.** `paths.mjs` `dataDir()` resolves to bare-storage's
+`persistent()` root (macOS `~/Library/Application Support`, Linux
+`$XDG_DATA_HOME|~/.local/share`, win32 `%APPDATA%`) + an app subdir that DIFFERS by
+runtime: a standalone production binary uses `…/hyperdht-explorer`, while dev runs
+(`bare bin.mjs`, detected by `basename(Bare.argv[0]) === 'bare'`) use
+`…/hyperdht-explorer-dev` — both durable, never temp, so dev and installed/scheduled
+data never mix. Precedence: `--storage` > `HYPERDHT_EXPLORER_HOME` > dev/prod default.
+`bin.mjs` resolves the dir once (`storage || dataDir()`) and exports it as
+`HYPERDHT_EXPLORER_HOME` so every command's `paths.mjs` agrees. It holds `nodes.db`,
+`public/*.html`, and the pear-runtime updater store. `openDb()` defaults to
+`paths.dbPath()` and calls `ensureDirs()`; render commands write to
+`paths.htmlPath('<name>.html')`. Never write outputs into the repo cwd. The `ops/`
+cron wrappers therefore require the **standalone** binary — running under `bare`
+(dev) would use the `-dev` dir instead.
 
 **Building/releasing:** `npm run make` (host) / `make:<target>` (cross) wrap
 `bare-build --standalone bin.mjs` → `out/<target>/`. OTA needs a real `upgrade`
@@ -147,8 +154,8 @@ persists between runs, so always migrate rather than assuming a fresh DB.
 
 `ops/scheduled-scan.sh` runs one cron-driven cycle (scan `--for 120` → geo → probe),
 appending to `scan.log`. It self-resolves the project root (it lives in `ops/`),
-sets `PATH`/`VOLTA_HOME` (cron has a minimal env; the global `bare` binary —
-`npm i -g bare-runtime` — must be on PATH), and holds an mkdir lock
+expects the standalone `hyperdht-explorer` binary on PATH (cron has a minimal env —
+set `PATH` in the crontab if needed), and holds an mkdir lock
 (`.scan.lock`) to prevent overlap. Setup + the macOS Full-Disk-Access gotcha are
 in `SCHEDULING.md`. Bounded `--for` (not signals/`timeout`) is what makes the
 cycle exit cleanly and write its snapshot.
