@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'bare-sqlite'
+import { dbPath, ensureDirs } from './paths.js'
 
-// Shared database access for the dht-explorer tools (crawler, geo, map).
+// Shared database access for the hyperdht-explorer tools (crawler, geo, map).
 //
 // Two tables:
 //   nodes - one row per discovered host:port (see index.js for tracking logic)
@@ -9,7 +10,8 @@ import { DatabaseSync } from 'bare-sqlite'
 //           the same geo-location, so we only ever hit the geoip API once per
 //           /24. This caps API usage hard and respects ip-api.com rate limits.
 
-export function openDb(path = 'nodes.db') {
+export function openDb(path = dbPath()) {
+  ensureDirs() // make sure the app-data dir exists before SQLite touches it
   const db = new DatabaseSync(path, { timeout: 5000 })
   db.exec('PRAGMA journal_mode = WAL;')
   db.exec(`
@@ -201,7 +203,13 @@ export function cleanName(s) {
 export function parseAs(asInfo, org, isp) {
   if (asInfo) {
     const m = /^AS(\d+)\s*(.*)$/i.exec(asInfo.trim())
-    if (m) return { asn: 'AS' + m[1], asnNum: Number(m[1]), name: cleanName(m[2] || org || isp || '') || 'AS' + m[1] }
+    if (m) {
+      return {
+        asn: 'AS' + m[1],
+        asnNum: Number(m[1]),
+        name: cleanName(m[2] || org || isp || '') || 'AS' + m[1]
+      }
+    }
     return { asn: null, asnNum: null, name: cleanName(asInfo) }
   }
   return { asn: null, asnNum: null, name: cleanName(org || isp || null) }

@@ -1,7 +1,8 @@
 import process from 'bare-process'
 import fs from 'bare-fs'
 import fetch from 'bare-fetch'
-import { openDb, prefixOf, parseAs, cleanName } from './db.js'
+import { openDb, prefixOf, parseAs, cleanName } from '../db.js'
+import { htmlPath, ensureDirs } from '../paths.js'
 
 // AS-level BGP topology of the networks hosting DHT nodes -> topology.html.
 //
@@ -11,223 +12,242 @@ import { openDb, prefixOf, parseAs, cleanName } from './db.js'
 // cached in as_neighbours. The graph shows our ASNs (sized by node count) plus the
 // shared transit ASNs that link them, as a D3 force-directed network.
 //
-//   npx bare topo.js [--refresh] [--min-share N] [--max-connectors N]
+//   bare bin.mjs topo [--refresh] [--min-share N] [--max-connectors N]
 //
 // Caveat: BGP relationships are inferred/approximate and differ between sources.
 
-const argv = globalThis.Bare?.argv ?? process.argv
-const REFRESH = argv.includes('--refresh')
-const flagNum = (n, d) => {
-  const i = argv.indexOf(n)
-  return i !== -1 ? Number(argv[i + 1]) : d
-}
-const MIN_SHARE = flagNum('--min-share', 3) // a transit AS must link >= this many of our ASNs
-const MAX_CONNECTORS = flagNum('--max-connectors', 20)
-const MAX_AGE = 7 * 24 * 3600 * 1000 // refetch neighbours older than a week
-const RIPE = 'https://stat.ripe.net/data'
-
-const sleep = (ms) => new Promise((r) => globalThis.setTimeout(r, ms))
-const db = openDb()
-
-// --- 1. our primary ASNs (with node counts + operator names) ----------------
-const geo = new Map()
-for (const g of db.prepare("SELECT * FROM geo WHERE status = 'success'").all()) geo.set(g.prefix, g)
-
-const primaries = new Map() // asnNum -> { asn, name, nodes }
-for (const { host } of db.prepare('SELECT host FROM nodes').all()) {
-  const g = geo.get(prefixOf(host))
-  if (!g) continue
-  const as = parseAs(g.as_info, g.org, g.isp)
-  if (as.asnNum == null) continue
-  let p = primaries.get(as.asnNum)
-  if (!p) {
-    p = { asn: as.asnNum, name: as.name, nodes: 0 }
-    primaries.set(as.asnNum, p)
+export async function run(ctx) {
+  const argv = ctx.argv
+  const REFRESH = argv.includes('--refresh')
+  const flagNum = (n, d) => {
+    const i = argv.indexOf(n)
+    return i !== -1 ? Number(argv[i + 1]) : d
   }
-  p.nodes++
-}
-const primaryAsns = [...primaries.keys()]
-console.log(`topo: ${primaryAsns.length} DHT-hosting ASNs`)
+  const MIN_SHARE = flagNum('--min-share', 3) // a transit AS must link >= this many of our ASNs
+  const MAX_CONNECTORS = flagNum('--max-connectors', 20)
+  const MAX_AGE = 7 * 24 * 3600 * 1000 // refetch neighbours older than a week
+  const RIPE = 'https://stat.ripe.net/data'
 
-// --- 2. ensure BGP neighbour data is cached ---------------------------------
-const fresh = new Set()
-if (!REFRESH) {
-  for (const r of db.prepare('SELECT asn, MAX(fetched_at) AS f FROM as_neighbours GROUP BY asn').all()) {
-    if (Date.now() - r.f < MAX_AGE) fresh.add(r.asn)
+  const sleep = (ms) => new Promise((r) => globalThis.setTimeout(r, ms))
+  const db = openDb()
+
+  // --- 1. our primary ASNs (with node counts + operator names) ----------------
+  const geo = new Map()
+  for (const g of db.prepare("SELECT * FROM geo WHERE status = 'success'").all()) {
+    geo.set(g.prefix, g)
   }
-}
-const insNeighbour = db.prepare(
-  'INSERT OR REPLACE INTO as_neighbours (asn, neighbour, type, power, fetched_at) VALUES (?, ?, ?, ?, ?)'
-)
-const delNeighbours = db.prepare('DELETE FROM as_neighbours WHERE asn = ?')
 
-const toFetch = primaryAsns.filter((a) => !fresh.has(a))
-if (toFetch.length) console.log(`topo: fetching BGP neighbours for ${toFetch.length} ASN(s) from RIPEstat…`)
-for (const asn of toFetch) {
-  try {
-    const res = await fetch(`${RIPE}/asn-neighbours/data.json?resource=AS${asn}&sourceapp=dht-explorer`)
-    const json = await res.json()
-    const neighbours = json?.data?.neighbours || []
-    delNeighbours.run(asn)
-    const now = Date.now()
-    for (const n of neighbours) insNeighbour.run(asn, n.asn, n.type || null, n.power || 0, now)
-    console.log(`  AS${asn}: ${neighbours.length} neighbours`)
-  } catch (err) {
-    console.error(`  AS${asn}: fetch failed (${err.message})`)
+  const primaries = new Map() // asnNum -> { asn, name, nodes }
+  for (const { host } of db.prepare('SELECT host FROM nodes').all()) {
+    const g = geo.get(prefixOf(host))
+    if (!g) continue
+    const as = parseAs(g.as_info, g.org, g.isp)
+    if (as.asnNum === null) continue
+    let p = primaries.get(as.asnNum)
+    if (!p) {
+      p = { asn: as.asnNum, name: as.name, nodes: 0 }
+      primaries.set(as.asnNum, p)
+    }
+    p.nodes++
   }
-  await sleep(150)
-}
+  const primaryAsns = [...primaries.keys()]
+  console.log(`topo: ${primaryAsns.length} DHT-hosting ASNs`)
 
-// --- 3. build the graph -----------------------------------------------------
-const primarySet = new Set(primaryAsns)
-const neighboursOf = new Map() // asn -> Set(neighbour)
-for (const asn of primaryAsns) {
-  const set = new Set(
-    db
-      .prepare('SELECT neighbour FROM as_neighbours WHERE asn = ?')
-      .all(asn)
-      .map((r) => r.neighbour)
+  // --- 2. ensure BGP neighbour data is cached ---------------------------------
+  const fresh = new Set()
+  if (!REFRESH) {
+    for (const r of db
+      .prepare('SELECT asn, MAX(fetched_at) AS f FROM as_neighbours GROUP BY asn')
+      .all()) {
+      if (Date.now() - r.f < MAX_AGE) fresh.add(r.asn)
+    }
+  }
+  const insNeighbour = db.prepare(
+    'INSERT OR REPLACE INTO as_neighbours (asn, neighbour, type, power, fetched_at) VALUES (?, ?, ?, ?, ?)'
   )
-  neighboursOf.set(asn, set)
-}
+  const delNeighbours = db.prepare('DELETE FROM as_neighbours WHERE asn = ?')
 
-const edges = new Map() // "min-max" -> {source,target}
-const addEdge = (a, b) => {
-  if (a === b) return
-  const k = Math.min(a, b) + '-' + Math.max(a, b)
-  if (!edges.has(k)) edges.set(k, { source: a, target: b })
-}
-
-// direct adjacency among our ASNs
-for (const a of primaryAsns) for (const n of neighboursOf.get(a)) if (primarySet.has(n)) addEdge(a, n)
-
-// shared transit connectors: non-primary ASNs adjacent to >= MIN_SHARE of ours
-const share = new Map() // connector asn -> Set(primary)
-for (const a of primaryAsns)
-  for (const n of neighboursOf.get(a)) {
-    if (primarySet.has(n)) continue
-    if (!share.has(n)) share.set(n, new Set())
-    share.get(n).add(a)
+  const toFetch = primaryAsns.filter((a) => !fresh.has(a))
+  if (toFetch.length) {
+    console.log(`topo: fetching BGP neighbours for ${toFetch.length} ASN(s) from RIPEstat…`)
   }
-const connectors = [...share.entries()]
-  .filter(([, ps]) => ps.size >= MIN_SHARE)
-  .sort((a, b) => b[1].size - a[1].size)
-  .slice(0, MAX_CONNECTORS)
-for (const [c, ps] of connectors) for (const a of ps) addEdge(a, c)
-
-// --- 4. names for connector ASNs (cached; fetch missing from RIPEstat) ------
-const nameCache = new Map(
-  db
-    .prepare('SELECT asn, name FROM as_names')
-    .all()
-    .map((r) => [r.asn, r.name])
-)
-const insName = db.prepare('INSERT OR REPLACE INTO as_names (asn, name, fetched_at) VALUES (?, ?, ?)')
-for (const [c] of connectors) {
-  if (nameCache.has(c)) continue
-  try {
-    const res = await fetch(`${RIPE}/as-overview/data.json?resource=AS${c}&sourceapp=dht-explorer`)
-    const json = await res.json()
-    const holder = json?.data?.holder || null
-    nameCache.set(c, holder)
-    insName.run(c, holder, Date.now())
-  } catch {
-    nameCache.set(c, null)
+  for (const asn of toFetch) {
+    try {
+      const res = await fetch(
+        `${RIPE}/asn-neighbours/data.json?resource=AS${asn}&sourceapp=hyperdht-explorer`
+      )
+      const json = await res.json()
+      const neighbours = json?.data?.neighbours || []
+      delNeighbours.run(asn)
+      const now = Date.now()
+      for (const n of neighbours) insNeighbour.run(asn, n.asn, n.type || null, n.power || 0, now)
+      console.log(`  AS${asn}: ${neighbours.length} neighbours`)
+    } catch (err) {
+      console.error(`  AS${asn}: fetch failed (${err.message})`)
+    }
+    await sleep(150)
   }
-  await sleep(150)
-}
 
-// --- 5. node + link arrays --------------------------------------------------
-// --- RPKI status per ASN (aggregated from rpki rows via geo's /24 -> ASN) ----
-const rpkiByPrefix = new Map(
-  db
-    .prepare('SELECT prefix24, status FROM rpki')
-    .all()
-    .map((r) => [r.prefix24, r.status])
-)
-const asnRpki = new Map() // asnNum -> {valid, invalid, unknown, unannounced}
-for (const [prefix24, status] of rpkiByPrefix) {
-  const g = geo.get(prefix24)
-  if (!g) continue
-  const as = parseAs(g.as_info, g.org, g.isp)
-  if (as.asnNum == null) continue
-  let c = asnRpki.get(as.asnNum)
-  if (!c) {
-    c = { valid: 0, invalid: 0, unknown: 0, unannounced: 0 }
-    asnRpki.set(as.asnNum, c)
+  // --- 3. build the graph -----------------------------------------------------
+  const primarySet = new Set(primaryAsns)
+  const neighboursOf = new Map() // asn -> Set(neighbour)
+  for (const asn of primaryAsns) {
+    const set = new Set(
+      db
+        .prepare('SELECT neighbour FROM as_neighbours WHERE asn = ?')
+        .all(asn)
+        .map((r) => r.neighbour)
+    )
+    neighboursOf.set(asn, set)
   }
-  c[status] = (c[status] || 0) + 1
-}
-function rpkiClass(c) {
-  if (!c || c.valid + c.invalid + c.unknown === 0) return 'none'
-  if (c.invalid > 0) return 'invalid'
-  if (c.valid > 0 && c.unknown > 0) return 'mixed'
-  if (c.valid > 0) return 'valid'
-  return 'unknown'
-}
 
-// --- apps hosted per ASN (from app_seeder tags via /24 -> ASN) ---------------
-const asnApps = new Map() // asnNum -> Set(app)
-for (const r of db.prepare('SELECT host, app_seeder FROM nodes WHERE app_seeder IS NOT NULL').all()) {
-  const g = geo.get(prefixOf(r.host))
-  if (!g) continue
-  const as = parseAs(g.as_info, g.org, g.isp)
-  if (as.asnNum == null) continue
-  if (!asnApps.has(as.asnNum)) asnApps.set(as.asnNum, new Set())
-  asnApps.get(as.asnNum).add(r.app_seeder)
-}
-const allApps = [...new Set([].concat(...[...asnApps.values()].map((s) => [...s])))].sort()
+  const edges = new Map() // "min-max" -> {source,target}
+  const addEdge = (a, b) => {
+    if (a === b) return
+    const k = Math.min(a, b) + '-' + Math.max(a, b)
+    if (!edges.has(k)) edges.set(k, { source: a, target: b })
+  }
 
-const nodes = []
-for (const [asn, p] of primaries) {
-  const counts = asnRpki.get(asn) || null
-  nodes.push({
-    id: asn,
-    name: cleanName(p.name) || 'AS' + asn,
-    primary: true,
-    weight: p.nodes,
-    rpki: rpkiClass(counts),
-    rpkiCounts: counts,
-    apps: [...(asnApps.get(asn) || [])]
-  })
-}
-for (const [c, ps] of connectors)
-  nodes.push({
-    id: c,
-    name: cleanName(nameCache.get(c)) || 'AS' + c,
-    primary: false,
-    weight: ps.size,
-    rpki: 'none',
-    rpkiCounts: null,
-    apps: []
-  })
-// only keep nodes that have at least one edge, so isolated ASNs don't clutter
-const linked = new Set()
-for (const e of edges.values()) {
-  linked.add(e.source)
-  linked.add(e.target)
-}
-const graphNodes = nodes.filter((n) => linked.has(n.id))
-const graphLinks = [...edges.values()]
+  // direct adjacency among our ASNs
+  for (const a of primaryAsns) {
+    for (const n of neighboursOf.get(a)) if (primarySet.has(n)) addEdge(a, n)
+  }
 
-console.log(
-  `topo: graph = ${graphNodes.length} nodes (${graphNodes.filter((n) => n.primary).length} ours + ${graphNodes.filter((n) => !n.primary).length} transit), ${graphLinks.length} links`
-)
+  // shared transit connectors: non-primary ASNs adjacent to >= MIN_SHARE of ours
+  const share = new Map() // connector asn -> Set(primary)
+  for (const a of primaryAsns) {
+    for (const n of neighboursOf.get(a)) {
+      if (primarySet.has(n)) continue
+      if (!share.has(n)) share.set(n, new Set())
+      share.get(n).add(a)
+    }
+  }
+  const connectors = [...share.entries()]
+    .filter(([, ps]) => ps.size >= MIN_SHARE)
+    .sort((a, b) => b[1].size - a[1].size)
+    .slice(0, MAX_CONNECTORS)
+  for (const [c, ps] of connectors) for (const a of ps) addEdge(a, c)
 
-const DATA = { nodes: graphNodes, links: graphLinks, apps: allApps }
+  // --- 4. names for connector ASNs (cached; fetch missing from RIPEstat) ------
+  const nameCache = new Map(
+    db
+      .prepare('SELECT asn, name FROM as_names')
+      .all()
+      .map((r) => [r.asn, r.name])
+  )
+  const insName = db.prepare(
+    'INSERT OR REPLACE INTO as_names (asn, name, fetched_at) VALUES (?, ?, ?)'
+  )
+  for (const [c] of connectors) {
+    if (nameCache.has(c)) continue
+    try {
+      const res = await fetch(
+        `${RIPE}/as-overview/data.json?resource=AS${c}&sourceapp=hyperdht-explorer`
+      )
+      const json = await res.json()
+      const holder = json?.data?.holder || null
+      nameCache.set(c, holder)
+      insName.run(c, holder, Date.now())
+    } catch {
+      nameCache.set(c, null)
+    }
+    await sleep(150)
+  }
 
-const BG = '#060a08'
-const PANEL = 'rgba(8,16,12,0.85)'
-const TEXT = '#eafff2'
-const MUTED = '#5f7d6e'
-const GREEN = '#b6ff3c'
-const CYAN = '#4cd9ff'
+  // --- 5. node + link arrays --------------------------------------------------
+  // --- RPKI status per ASN (aggregated from rpki rows via geo's /24 -> ASN) ----
+  const rpkiByPrefix = new Map(
+    db
+      .prepare('SELECT prefix24, status FROM rpki')
+      .all()
+      .map((r) => [r.prefix24, r.status])
+  )
+  const asnRpki = new Map() // asnNum -> {valid, invalid, unknown, unannounced}
+  for (const [prefix24, status] of rpkiByPrefix) {
+    const g = geo.get(prefix24)
+    if (!g) continue
+    const as = parseAs(g.as_info, g.org, g.isp)
+    if (as.asnNum === null) continue
+    let c = asnRpki.get(as.asnNum)
+    if (!c) {
+      c = { valid: 0, invalid: 0, unknown: 0, unannounced: 0 }
+      asnRpki.set(as.asnNum, c)
+    }
+    c[status] = (c[status] || 0) + 1
+  }
+  function rpkiClass(c) {
+    if (!c || c.valid + c.invalid + c.unknown === 0) return 'none'
+    if (c.invalid > 0) return 'invalid'
+    if (c.valid > 0 && c.unknown > 0) return 'mixed'
+    if (c.valid > 0) return 'valid'
+    return 'unknown'
+  }
 
-const html = `<!DOCTYPE html>
+  // --- apps hosted per ASN (from app_seeder tags via /24 -> ASN) ---------------
+  const asnApps = new Map() // asnNum -> Set(app)
+  for (const r of db
+    .prepare('SELECT host, app_seeder FROM nodes WHERE app_seeder IS NOT NULL')
+    .all()) {
+    const g = geo.get(prefixOf(r.host))
+    if (!g) continue
+    const as = parseAs(g.as_info, g.org, g.isp)
+    if (as.asnNum === null) continue
+    if (!asnApps.has(as.asnNum)) asnApps.set(as.asnNum, new Set())
+    asnApps.get(as.asnNum).add(r.app_seeder)
+  }
+  const allApps = [...new Set([].concat(...[...asnApps.values()].map((s) => [...s])))].sort()
+
+  const nodes = []
+  for (const [asn, p] of primaries) {
+    const counts = asnRpki.get(asn) || null
+    nodes.push({
+      id: asn,
+      name: cleanName(p.name) || 'AS' + asn,
+      primary: true,
+      weight: p.nodes,
+      rpki: rpkiClass(counts),
+      rpkiCounts: counts,
+      apps: [...(asnApps.get(asn) || [])]
+    })
+  }
+  for (const [c, ps] of connectors) {
+    nodes.push({
+      id: c,
+      name: cleanName(nameCache.get(c)) || 'AS' + c,
+      primary: false,
+      weight: ps.size,
+      rpki: 'none',
+      rpkiCounts: null,
+      apps: []
+    })
+  }
+  // only keep nodes that have at least one edge, so isolated ASNs don't clutter
+  const linked = new Set()
+  for (const e of edges.values()) {
+    linked.add(e.source)
+    linked.add(e.target)
+  }
+  const graphNodes = nodes.filter((n) => linked.has(n.id))
+  const graphLinks = [...edges.values()]
+
+  console.log(
+    `topo: graph = ${graphNodes.length} nodes (${graphNodes.filter((n) => n.primary).length} ours + ${graphNodes.filter((n) => !n.primary).length} transit), ${graphLinks.length} links`
+  )
+
+  const DATA = { nodes: graphNodes, links: graphLinks, apps: allApps }
+
+  const BG = '#060a08'
+  const PANEL = 'rgba(8,16,12,0.85)'
+  const TEXT = '#eafff2'
+  const MUTED = '#5f7d6e'
+  const GREEN = '#b6ff3c'
+  const CYAN = '#4cd9ff'
+
+  const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>dht-explorer · BGP topology</title>
+  <title>hyperdht-explorer · BGP topology</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
   <style>
@@ -252,7 +272,7 @@ const html = `<!DOCTYPE html>
 </head>
 <body>
   <div id="title" class="panel">
-    <h1>dht-explorer · <span class="accent">BGP topology</span></h1>
+    <h1>hyperdht-explorer · <span class="accent">BGP topology</span></h1>
     <div class="sub">how the ASNs hosting DHT nodes interconnect in the global routing fabric (RIPEstat, BGP-inferred). <b>Click a green AS</b> to highlight shortest paths to the other DHT ASNs. Drag to pin, double-click to release, scroll to zoom.</div>
   </div>
   <div id="info" class="panel" style="display:none; top:16px; right:16px; max-width:300px; line-height:1.5"></div>
@@ -481,9 +501,10 @@ const html = `<!DOCTYPE html>
 </html>
 `
 
-fs.writeFileSync('topology.html', html)
-const cwd = (process.cwd && process.cwd()) || '.'
-console.log('topo: wrote topology.html')
-console.log(`open it in a browser:  file://${cwd}/topology.html`)
-db.close()
-process.exit(0)
+  ensureDirs()
+  const out = htmlPath('topology.html')
+  fs.writeFileSync(out, html)
+  console.log('topo: wrote topology.html')
+  console.log(`open it in a browser:  file://${out}`)
+  db.close()
+}

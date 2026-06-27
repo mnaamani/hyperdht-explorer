@@ -1,10 +1,5 @@
 .claude/
 node_modules
-nodes.db*
-ring.html
-map.html
-timeline.html
-summary.html
-topology.html
+out/
 scan.log
 .scan.lock

@@ -1,4 +1,4 @@
-# Proposal: Federated dht-explorer
+# Proposal: Federated hyperdht-explorer
 
 **Status:** proposed / not started
 **Depends on:** a hypercore-based observation feed, and a merge strategy
@@ -6,10 +6,10 @@
 
 ## Summary
 
-Today dht-explorer crawls from a single vantage point and stores everything in one
+Today hyperdht-explorer crawls from a single vantage point and stores everything in one
 local `nodes.db`. A single node behind one NAT/region sees a biased slice of the
 DHT. This proposal uses hyperdht's own put/get + announce primitives to let many
-independent dht-explorer instances **discover each other and pool their findings**,
+independent hyperdht-explorer instances **discover each other and pool their findings**,
 producing a far more complete and less geographically biased census than any one
 machine can — with the DHT itself as the coordination layer.
 
@@ -19,7 +19,7 @@ larger architectural follow-on, deliberately deferred.
 
 ## Why the DHT is the right substrate
 
-- We're already *on* the network — no extra servers, accounts, or central registry.
+- We're already _on_ the network — no extra servers, accounts, or central registry.
 - The pieces map cleanly onto primitives we already use:
   - **`announce` / `lookup`** (see `seeders.js`) → rendezvous: find other explorers.
   - **mutable records** (`store.js mput/mget`) → each explorer's signed pointer.
@@ -32,7 +32,7 @@ larger architectural follow-on, deliberately deferred.
 All explorers `announce` under a shared, well-known topic:
 
 ```
-topic = hash("dht-explorer/federation/v1")
+topic = hash("hyperdht-explorer/federation/v1")
 ```
 
 A `lookup` on that topic yields the set of currently-online explorer instances
@@ -45,12 +45,12 @@ record** under `hash(publicKey)` whose ~1 KB value is a compact manifest:
 
 ```jsonc
 {
-  "feed":      "<hypercore-key>",   // the explorer's observation feed
-  "nodes":     1234,                // summary stats (cheap to show without syncing)
-  "alive":     1180,
+  "feed": "<hypercore-key>", // the explorer's observation feed
+  "nodes": 1234, // summary stats (cheap to show without syncing)
+  "alive": 1180,
   "countries": 31,
-  "updated":   1719300000000,
-  "v":         1
+  "updated": 1719300000000,
+  "v": 1
 }
 ```
 
@@ -102,8 +102,8 @@ anything under their own key.
   linearization worth the complexity, or is periodic pull + last-writer-wins per
   `host:port` enough for a census?
 - Feed retention / compaction strategy (append-only growth).
-- How much to share — raw sightings vs. only derived summaries (privacy of *who is
-  crawling from where*).
+- How much to share — raw sightings vs. only derived summaries (privacy of _who is
+  crawling from where_).
 - Schema/version negotiation across explorer versions.
 
 ## Phasing

@@ -15,7 +15,7 @@
 
 set -u
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR" || exit 1
 
 export VOLTA_HOME="${VOLTA_HOME:-$HOME/.volta}"
@@ -41,6 +41,6 @@ echo "$$" >"$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT
 
 log "observe start ($OBSERVE_APP, ${OBSERVE_MINUTES}m)"
-npx bare observe.js "$OBSERVE_LINK" "$OBSERVE_APP" --minutes "$OBSERVE_MINUTES" >>"$LOG" 2>&1 || log "observe exited non-zero"
-npx bare geo.js      >>"$LOG" 2>&1 || log "geo exited non-zero"      # classify any new observed /24s
+hyperdht-explorer observe "$OBSERVE_LINK" "$OBSERVE_APP" --minutes "$OBSERVE_MINUTES" >>"$LOG" 2>&1 || log "observe exited non-zero"
+hyperdht-explorer geo      >>"$LOG" 2>&1 || log "geo exited non-zero"      # classify any new observed /24s
 log "observe done"

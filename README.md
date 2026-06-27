@@ -1,4 +1,4 @@
-# dht-explorer
+# hyperdht-explorer
 
 A crawler and visualizer for the [hyperdht](https://github.com/holepunchto/hyperdht)
 network — the Kademlia DHT that powers Holepunch / Pear apps (Keet, etc.).
@@ -11,30 +11,116 @@ also look up the peers seeding a specific Pear application by its `pear://` link
 ## Requirements
 
 This project runs on the **[Bare](https://github.com/holepunchto/bare) runtime**,
-not Node.js. Every command is invoked with `npx bare`. (Running under `node` will
-fail — the native modules use Bare addons.)
+not Node.js. (Running under `node` will fail — the native modules use Bare
+addons.) Install the `bare` runtime globally once, then install deps:
 
 ```sh
-npm install
+npm install -g bare-runtime   # provides the `bare` binary on PATH
+npm install                   # project dependencies
 ```
+
+It is structured as a single **pear-runtime standalone CLI app** (modeled on
+[hello-pear-bare](https://github.com/holepunchto/hello-pear-bare)): one entry,
+`bin.mjs`, dispatches subcommands that live in `commands/`. Run a command either
+through its `npm run` alias or directly:
+
+```sh
+npm run scan -- --for 60       # via npm
+bare bin.mjs scan --for 60     # equivalent, direct
+bare bin.mjs help              # list all commands
+```
+
+### Where data goes
+
+All runtime state lives **outside the repo**, in a per-user OS app-data
+directory:
+
+| OS      | Location                                                                          |
+| ------- | --------------------------------------------------------------------------------- |
+| macOS   | `~/Library/Application Support/hyperdht-explorer/`                                |
+| Linux   | `$XDG_DATA_HOME/hyperdht-explorer/` (default `~/.local/share/hyperdht-explorer/`) |
+| Windows | `%APPDATA%/hyperdht-explorer/`                                                    |
+
+It holds `nodes.db` (SQLite), the generated `public/*.html` pages, and the
+pear-runtime updater store. Override the whole location with `--storage <dir>` or
+the `HYPERDHT_EXPLORER_HOME` env var. Each render command prints the absolute `file://`
+path of the page it wrote.
+
+### Installing it as a system command
+
+Once `hyperdht-explorer` is on your PATH you can drop the `bare bin.mjs` prefix and
+just run `hyperdht-explorer scan --for 60`. There are three ways to get there,
+proper P2P first:
+
+**a) Install peer-to-peer (the Pear way).** No clone, no repo — just the published
+`pear://` link:
+
+```sh
+npx pear-install pear://<key>          # fetch + install the app over the DHT
+```
+
+After the first install, new releases reach you over the swarm — no reinstall.
+(`pear install` as a built-in CLI subcommand is still "upcoming"; today the
+standalone [`pear-install`](https://www.npmjs.com/package/pear-install) module is
+the way. It takes a `pear://` link — **not** a local path like `.`.)
+
+**b) Build a self-contained binary.** `npm run make` (host) or `npm run make:<target>`
+(cross) produces `out/<host>/hyperdht-explorer`; copy it somewhere on PATH. No
+`bare` needed at runtime.
+
+**c) Local-repo shortcut (dev convenience).** Inside a clone, symlink the entry so
+you can run it by name while hacking on it:
+
+```sh
+npm install -g .                       # symlinks `hyperdht-explorer` -> bin.mjs (needs `bare` on PATH)
+```
+
+This is the Node-style shortcut, not the distribution mechanism — prefer (a)/(b)
+for real use. Any of the three satisfies the cron wrappers in `ops/`, which assume
+an installed `hyperdht-explorer` command — see [SCHEDULING.md](./SCHEDULING.md).
+
+### Publishing a release (maintainers)
+
+Distribution rides on a real `upgrade` `pear://` link (the `package.json` field is a
+`pear://<YOUR_KEY_HERE>` placeholder until you mint one). Using the
+[`pear`](https://docs.pears.com) CLI:
+
+```sh
+npm i -g pear                          # the pear CLI
+pear touch                             # mint your pear:// link
+# paste it into package.json "upgrade"
+pear stage <channel>                   # snapshot cwd into the app hypercore
+pear seed <channel>                    # seed it so peers (and pear-install) can fetch
+```
+
+End users then install with `npx pear-install pear://<key>` (path (a) above). This
+mirrors the [hello-pear-bare](https://docs.pears.com/getting-started/from-a-template/start-from-hello-pear-bare)
+template we're modeled on.
+
+### OTA self-updates
+
+The pear-runtime updater is wired in but **off by default** — pass `--updates` to
+enable it. It spawns a background worker that applies P2P over-the-air updates from
+the `upgrade` `pear://` link in `package.json` (set per "Publishing a release"
+above). Until a real link is set, leave updates off.
 
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| `npm run scan` | Crawl the DHT (random-walk) and record discovered nodes. Runs until stopped. |
-| `npm run geo` | Geo-locate newly discovered networks via ip-api.com (cached, rate-limited). |
-| `npm run probe` | Ping every known node to record liveness + round-trip time. |
-| `npm run seeders -- <pear://link> [name]` | Find peers seeding a Pear app and tag their endpoints. |
-| `npm run observe -- <pear://link> [name] [--minutes N]` | Seed a public topic and record connecting (incl. NAT'd) peers. |
-| `npm run map` | Render `map.html` — an interactive world map of everything collected. |
-| `npm run ring` | Render `ring.html` — a circular projection of the Kademlia keyspace. |
-| `npm run timeline` | Render `timeline.html` — how the network evolves over time. |
-| `npm run store -- put/get/mput/mget …` | Put/get small records in the DHT (BEP44-style demo). |
-| `npm run storeprobe` | Measure DHT storage reliability (canary put/get persistence). |
-| `npm run summary` | Render `summary.html` — sortable tables of nodes by ASN/operator and /24. |
-| `npm run topo -- [--refresh]` | Render `topology.html` — BGP/AS interconnection of the hosting networks. |
-| `npm run rpki -- [--refresh]` | Fetch RPKI route-origin validity for the hosting prefixes (RIPEstat). |
+| Command                                                 | What it does                                                                 |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `npm run scan`                                          | Crawl the DHT (random-walk) and record discovered nodes. Runs until stopped. |
+| `npm run geo`                                           | Geo-locate newly discovered networks via ip-api.com (cached, rate-limited).  |
+| `npm run probe`                                         | Ping every known node to record liveness + round-trip time.                  |
+| `npm run seeders -- <pear://link> [name]`               | Find peers seeding a Pear app and tag their endpoints.                       |
+| `npm run observe -- <pear://link> [name] [--minutes N]` | Seed a public topic and record connecting (incl. NAT'd) peers.               |
+| `npm run map`                                           | Render `map.html` — an interactive world map of everything collected.        |
+| `npm run ring`                                          | Render `ring.html` — a circular projection of the Kademlia keyspace.         |
+| `npm run timeline`                                      | Render `timeline.html` — how the network evolves over time.                  |
+| `npm run store -- put/get/mput/mget …`                  | Put/get small records in the DHT (BEP44-style demo).                         |
+| `npm run storeprobe`                                    | Measure DHT storage reliability (canary put/get persistence).                |
+| `npm run summary`                                       | Render `summary.html` — sortable tables of nodes by ASN/operator and /24.    |
+| `npm run topo -- [--refresh]`                           | Render `topology.html` — BGP/AS interconnection of the hosting networks.     |
+| `npm run rpki -- [--refresh]`                           | Fetch RPKI route-origin validity for the hosting prefixes (RIPEstat).        |
 
 A typical session:
 
@@ -60,17 +146,17 @@ npm run scan -- --queries 50    # crawl until 50 findNode queries, then stop
 > SIGINT/SIGTERM to JS, so an external `timeout` would hard-kill the process and
 > skip the summary (the data is still saved either way). Use `--for` / `--queries`.
 
-All state lives in `nodes.db` (SQLite) and the generated HTML pages, created in
-the working directory. Re-running `scan` accumulates more sightings over time,
-which is what makes the stability tracking meaningful.
+All state lives in `nodes.db` (SQLite) and the generated HTML pages, under the
+app-data directory described above. Re-running `scan` accumulates more sightings
+over time, which is what makes the stability tracking meaningful.
 
 To run scans automatically on a schedule (recommended, since the time-series
 views get richer as snapshots accrue), see [SCHEDULING.md](./SCHEDULING.md) —
-it ships a cron-ready `scheduled-scan.sh` wrapper.
+it ships a cron-ready `ops/scheduled-scan.sh` wrapper.
 
 ## How it works
 
-### Crawling (`index.js`)
+### Crawling (`commands/scan.js`)
 
 hyperdht's `HyperDHT` extends `dht-rpc`, so the lower-level Kademlia primitives
 (`findNode`, `query`, `ping`, `toArray`) are available directly on the DHT
@@ -83,7 +169,7 @@ startup it also seeds the routing table with the most recently seen peers from
 `nodes.db`, alongside the well-known bootstrap nodes.
 
 > **Note:** the crawler discovers DHT **nodes** (the IP\:port routing
-> participants). You cannot enumerate *announced services* from random keys — the
+> participants). You cannot enumerate _announced services_ from random keys — the
 > DHT is deliberately non-enumerable. To find announcers you must already know
 > the target hash (see Seeders below).
 
@@ -100,11 +186,11 @@ once and never again ⇒ transient / dynamic.
 
 ### Pruning (during a scan)
 
-To keep the database reflecting the *live* network rather than growing forever
+To keep the database reflecting the _live_ network rather than growing forever
 with long-dead endpoints, `scan` prunes stale nodes — any whose `last_seen` is
 older than a cutoff (default **72 hours**):
 
-- **At startup**, *before* the routing table is seeded — so dead nodes from a
+- **At startup**, _before_ the routing table is seeded — so dead nodes from a
   previous run aren't fed back in as bootstrap peers.
 - **Periodically mid-crawl** (every 50 queries) — so long-running scans stay
   trimmed. Nodes seen during the current run have their `last_seen` refreshed, so
@@ -122,7 +208,7 @@ table. The `geo` cache is **not** pruned — it's keyed by `/24` and reused if a
 network reappears, saving an ip-api lookup. Tagged seeders (`app_seeder`) follow
 the same 72h rule as any other node.
 
-### Geo-location (`geo.js`)
+### Geo-location (`commands/geo.js`)
 
 Resolves IPs to lat/lon/city/ISP using **ip-api.com**'s batch endpoint. To
 respect rate limits it:
@@ -132,14 +218,14 @@ respect rate limits it:
 - skips any `/24` already cached, so each address is queried at most once;
 - batches 100 lookups per request and honours the `X-Rl` / `X-Ttl` headers.
 
-### Probing (`probe.js`)
+### Probing (`commands/probe.js`)
 
 The only "interrogation" the DHT protocol permits is `PING` — DHT nodes expose
 nothing about what software they run or what they seed (by design). Probing
 records `alive`, `rtt_ms`, and `last_ping`, which sharpens the stability signal:
-a node seen across many sessions *and* still answering is clearly dedicated.
+a node seen across many sessions _and_ still answering is clearly dedicated.
 
-### Seeders (`seeders.js`)
+### Seeders (`commands/seeders.js`)
 
 Pear apps are distributed over the same DHT: every install replicates the app's
 update feed, announcing under its **discovery key**. Given a `pear://` link (or
@@ -155,7 +241,7 @@ This finds seeders of the **application feed** — effectively a census of onlin
 announcing installs — **not** private chat rooms, which are keyed by per-room
 invite keys and are not discoverable.
 
-### Map (`map.js`)
+### Map (`commands/map.js`)
 
 Generates a self-contained `map.html` (Leaflet + markercluster from CDN, data
 embedded inline). Networks are grouped by `/24`, one marker each:
@@ -165,14 +251,14 @@ embedded inline). Networks are grouped by `/24`, one marker each:
   grey = probed but unreachable
 - **magenta ring** marks app seeders; a layer toggle filters to seeders only
 
-### Ring (`ring.js`)
+### Ring (`commands/ring.js`)
 
 A self-contained SVG that projects each node onto a circle by the high bits of its
 id (dot size = sightings, colour = sessions, magenta = seeders). Shows keyspace
 coverage and popularity. Note: Kademlia uses an XOR metric and is really a binary
 trie — the circle is a projection, so ring adjacency ≠ routing distance.
 
-### Topology (`topo.js`)
+### Topology (`commands/topo.js`)
 
 Renders the **underlay** view (`topology.html`): not DHT overlay links (any node
 can talk to any node), but how the ASNs hosting the nodes interconnect in the
@@ -200,11 +286,11 @@ red = invalid, amber = mixed, grey = unknown/no-ROA) — i.e. how route-secure t
 underlay each part of the DHT runs on actually is.
 
 RIPEstat rate-limit compliance is built in: every request carries
-`sourceapp=dht-explorer`, calls are strictly sequential (the limit is 8
+`sourceapp=hyperdht-explorer`, calls are strictly sequential (the limit is 8
 concurrent/IP) and spaced, one covering prefix is reused across all the /24s it
 contains, and results are cached (refetched weekly, or with `--refresh`).
 
-### Store (`store.js`)
+### Store (`commands/store.js`)
 
 A demo of hyperdht's BEP44-style record storage — put/get small signed values
 into the DHT (stored on the nodes closest to the key):
@@ -221,7 +307,7 @@ expire in ~20 min unless republished. Mutable records are ed25519-signed with a
 `seq` for compare-and-swap. Useful as a pointer/rendezvous layer (e.g. publish a
 hypercore key), not as storage.
 
-### Storage probe (`storeprobe.js`)
+### Storage probe (`commands/storeprobe.js`)
 
 Uses the put/get primitives to measure the **DHT's storage reliability** — a
 dimension node-pinging can't reveal. It puts N immutable canary records, records
@@ -243,18 +329,18 @@ page (storage-health trend + a "replica decay" chart with the ~20-min expiry
 marked). Because a run spans the TTL, schedule it **separately** from the 15-min
 scan cycle (see [SCHEDULING.md](./SCHEDULING.md)). A future
 [federation proposal](./PROPOSAL-federation.md) covers using these same primitives
-to make dht-explorer itself distributed.
+to make hyperdht-explorer itself distributed.
 
 ### Reading the charts
 
 How to interpret what the **timeline** page shows once data has accrued.
 
 **What to expect from a real storage-probe run.** With the default checkpoints
-(spanning the ~20-min TTL), the *Replica decay* chart should hold roughly flat near
+(spanning the ~20-min TTL), the _Replica decay_ chart should hold roughly flat near
 the initial replica count (≈20) through ~15 minutes, then fall toward zero around
 the dashed **~20-min TTL** marker — empirically reproducing hyperdht's record
-expiry. **That cliff is the meaningful result:** *where* it sits and *whether it
-shifts* over time is what the storage view tracks.
+expiry. **That cliff is the meaningful result:** _where_ it sits and _whether it
+shifts_ over time is what the storage view tracks.
 
 - A **clean flat-then-cliff at ~20m** = healthy storage; records are held for the
   full TTL by the responsible nodes.
@@ -263,7 +349,7 @@ shifts* over time is what the storage view tracks.
   a sign those nodes are busy/overloaded.
 - **Low initial replica count** (well under ~20) = the put didn't reach the full
   set of closest nodes (network reachability / churn at that point in the keyspace).
-- In the *Storage health* trend, watch **% retrievable** and **% replicas
+- In the _Storage health_ trend, watch **% retrievable** and **% replicas
   persisted** over days — dips indicate the network got worse at holding data
   (load, churn, or instability), independent of how many nodes are simply alive.
 
@@ -286,7 +372,7 @@ shifts* over time is what the storage view tracks.
 All time-series views sharpen as the observed span grows, so they're most
 meaningful after the scheduled scans have been running for a few days.
 
-### Timeline (`timeline.js`)
+### Timeline (`commands/timeline.js`)
 
 Shows how the population evolves over time: discovery & churn (new vs departed
 nodes/hour, cumulative set), approximate concurrent presence, a survival/retention
@@ -297,13 +383,13 @@ crawler appends to at the end of every run, so it fills in as you scan more.
 
 ## Files
 
-| File | Role |
-| --- | --- |
-| `index.js` | DHT crawler (`scan`) |
-| `geo.js` | ip-api.com geo enrichment |
-| `probe.js` | liveness / RTT ping probe |
-| `seeders.js` | Pear app seeder lookup + tagging |
-| `map.js` | `map.html` generator |
-| `db.js` | shared SQLite schema + `/24` prefix helper |
-| `nodes.db` | SQLite database (generated) |
-| `map.html` | rendered map (generated) |
+| File                          | Role                                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------------------- |
+| `bin.mjs`                     | CLI entry — parses flags, resolves the data dir, dispatches subcommands               |
+| `commands/*.js`               | one file per subcommand (`scan`, `geo`, `probe`, `map`, …), each exporting `run(ctx)` |
+| `db.js`                       | shared SQLite schema + helpers (`prefixOf`, `parseAs`, `hostKind`, …)                 |
+| `paths.js`                    | resolves the OS app-data dir + DB / HTML paths                                        |
+| `app.cjs`, `workers/main.cjs` | pear-runtime OTA self-updater (optional, `--updates`)                                 |
+| `scripts/make.js`             | picks the `bare-build` target for the host platform                                   |
+| `<app-data>/nodes.db`         | SQLite database (generated, outside the repo)                                         |
+| `<app-data>/public/*.html`    | rendered map / ring / timeline / summary / topology (generated)                       |

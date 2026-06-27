@@ -7,7 +7,7 @@
 
 set -u
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR" || exit 1
 
 export VOLTA_HOME="${VOLTA_HOME:-$HOME/.volta}"
@@ -29,5 +29,5 @@ echo "$$" >"$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT
 
 log "storeprobe start"
-npx bare storeprobe.js >>"$LOG" 2>&1 || log "storeprobe exited non-zero"
+hyperdht-explorer storeprobe >>"$LOG" 2>&1 || log "storeprobe exited non-zero"
 log "storeprobe done"

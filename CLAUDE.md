@@ -4,53 +4,78 @@ Guidance for working in this repo. Read this before making changes.
 
 ## Runtime: Bare, not Node
 
-This project runs on the **Bare runtime** (`npx bare <file>.js`), NOT Node.js.
+This project runs on the **Bare runtime**, NOT Node.js. It is a single
+pear-runtime CLI app: one entry `bin.mjs` dispatches subcommands. Run a command
+with `bare bin.mjs <command> [args]` (or its `npm run <command>` alias).
 
-- Run/test everything with `npx bare`. `node` will throw
+- Run/test everything with `bare bin.mjs <command>`. `node` will throw
   `TypeError: require.addon is not a function` because the dependencies
   (`bare-process`, `bare-sqlite`, `bare-fs`, `bare-fetch`) are Bare-native.
 - To inspect a Bare module's source, **Read** the file — don't execute it under
   Node.
-- `package.json` has `"type": "module"`; all files are ESM. Bare infers ESM vs
-  CJS from the nearest `package.json`, so scratch test files must live in this
+- `package.json` has `"type": "module"`; all `.js`/`.mjs` files are ESM. The OTA
+  updater files (`app.cjs`, `workers/main.cjs`) are deliberately **CJS** (`.cjs`)
+  because pear-runtime's worker uses `require`. Bare infers module type from the
+  extension + nearest `package.json`, so scratch test files must live in this
   directory (not `/tmp`) to be treated as modules.
 - `Date.now()`, timers (`globalThis.setTimeout`), and `b4a` work normally in the
-  app. Code defensively for argv/exit: `globalThis.Bare?.argv ?? process.argv`
-  and `(globalThis.Bare?.exit ?? process.exit)`.
+  app. `bin.mjs` reads `Bare.argv` and owns process exit (`Bare.exit`); commands
+  receive a synthetic `ctx.argv` (= `[arg0, cmdName, ...rest]`, so their existing
+  `argv[2..]` parsing is unchanged) and must **return** instead of calling
+  `process.exit` — exiting from inside a command would skip the updater teardown.
 - **Signals don't reach JS in this Bare build.** Neither `process.on('SIGINT'/
-  'SIGTERM')` (bare-process) nor `new Signal('SIGTERM').start()` (bare-signals)
-  fires — the process dies by default disposition. So `timeout npx bare …`
+'SIGTERM')` (bare-process) nor `new Signal('SIGTERM').start()` (bare-signals)
+  fires — the process dies by default disposition. So `timeout bare …`
   hard-kills and skips cleanup. For bounded/scheduled runs use in-code limits
-  instead: `index.js` supports `--for <seconds>` and `--queries <n>`, which call
-  `shutdown()` themselves (summary + clean exit). Don't rely on signal handlers.
+  instead: `scan` supports `--for <seconds>` and `--queries <n>`, which resolve
+  the command's `run()` promise themselves (summary + clean exit). Don't rely on
+  signal handlers.
 
 ## Architecture
 
-A pipeline of small single-purpose scripts sharing one SQLite database
-(`nodes.db`). `db.js` is the only place the schema lives.
+`bin.mjs` is the CLI entry: it strips global flags (`--storage <dir>`,
+`--updates`/`--no-updates`), resolves the data dir once, optionally boots the OTA
+updater (`app.cjs` → `workers/main.cjs`, best-effort, off by default), then
+dynamically imports `commands/<name>.js` and awaits its exported `run(ctx)`. Each
+command is otherwise a small single-purpose unit sharing one SQLite database.
+`db.js` is the only place the schema lives.
 
-- `index.js` (`scan`) — random-walk crawler. `HyperDHT extends dht-rpc`, so
+**Storage lives OUTSIDE the repo.** `paths.js` resolves a per-user OS app-data dir
+(`dataDir()`): macOS `~/Library/Application Support/hyperdht-explorer`, Linux
+`$XDG_DATA_HOME/.../hyperdht-explorer`, Windows `%APPDATA%/hyperdht-explorer` — overridable
+via `HYPERDHT_EXPLORER_HOME` or `--storage`. It holds `nodes.db`, `public/*.html`, and
+the pear-runtime updater store. `openDb()` defaults to `paths.dbPath()` and calls
+`ensureDirs()`; render commands write to `paths.htmlPath('<name>.html')`. Never
+write outputs into the repo cwd.
+
+**Building/releasing:** `npm run make` (host) / `make:<target>` (cross) wrap
+`bare-build --standalone bin.mjs` → `out/<target>/`. OTA needs a real `upgrade`
+`pear://` link in `package.json` (mint with `pear touch`); until then keep updates
+off. Native-addon (`bare-sqlite`/`bare-fetch`) bundling in standalone builds is the
+one thing to verify when first cutting a binary.
+
+- `commands/scan.js` (`scan`) — random-walk crawler. `HyperDHT extends dht-rpc`, so
   `findNode`/`query`/`ping`/`toArray` are on the `dht` instance directly.
-- `geo.js` (`geo`) — ip-api.com batch geo lookup, one query per `/24`.
-- `probe.js` (`probe`) — `dht.ping` for liveness + RTT.
-- `seeders.js` (`seeders`) — `pear://`/key → discovery key → `dht.lookup` →
+- `commands/geo.js` (`geo`) — ip-api.com batch geo lookup, one query per `/24`.
+- `commands/probe.js` (`probe`) — `dht.ping` for liveness + RTT.
+- `commands/seeders.js` (`seeders`) — `pear://`/key → discovery key → `dht.lookup` →
   tag announcer relay endpoints in `app_seeder`.
-- `map.js` (`map`) — emits self-contained `map.html` (Leaflet, data inlined).
-- `ring.js` (`ring`) — emits `ring.html`, an offline inline-SVG circular
+- `commands/map.js` (`map`) — emits self-contained `map.html` (Leaflet, data inlined).
+- `commands/ring.js` (`ring`) — emits `ring.html`, an offline inline-SVG circular
   projection of the keyspace (no CDN).
-- `timeline.js` (`timeline`) — emits `timeline.html` (Chart.js via CDN). Views 1/2/4
+- `commands/timeline.js` (`timeline`) — emits `timeline.html` (Chart.js via CDN). Views 1/2/4
   are derived from `first_seen`/`last_seen`; the snapshot view reads `snapshots`;
   the storage-health view reads `store_probes`. The crawler writes one `snapshots`
   row per run in `writeSnapshot()` (crawl mode only, gated by `snapshotOnExit`).
-- `store.js` (`store`) — demo of hyperdht BEP44-style put/get (immutable + mutable).
-- `storeprobe.js` (`storeprobe`) — puts canary records and re-polls the closest
+- `commands/store.js` (`store`) — demo of hyperdht BEP44-style put/get (immutable + mutable).
+- `commands/storeprobe.js` (`storeprobe`) — puts canary records and re-polls the closest
   nodes (direct `dht.request` with `COMMANDS.IMMUTABLE_GET` from
   `hyperdht/lib/constants.js`) at checkpoints spanning hyperdht's **~20-min record
   TTL** (`defaultMaxAge`) → a decay curve in `store_probes`. A run is ≈22 min, so it
-  is scheduled separately (`scheduled-storeprobe.sh`), NOT in the 15-min scan cycle.
-- `summary.js` (`summary`) — emits `summary.html`, sortable tables by ASN/operator
+  is scheduled separately (`ops/scheduled-storeprobe.sh`), NOT in the 15-min scan cycle.
+- `commands/summary.js` (`summary`) — emits `summary.html`, sortable tables by ASN/operator
   and /24 (no CDN; server-rendered rows + vanilla sort/filter JS).
-- `topo.js` (`topo`) — emits `topology.html`, a D3 (CDN) force graph of the BGP/AS
+- `commands/topo.js` (`topo`) — emits `topology.html`, a D3 (CDN) force graph of the BGP/AS
   interconnection. Fetches AS adjacencies + holder names from **RIPEstat**
   (`stat.ripe.net/data/asn-neighbours` and `as-overview`) via `bare-fetch`, cached
   in `as_neighbours` / `as_names` (refetch weekly or `--refresh`). It's the underlay
@@ -58,18 +83,18 @@ A pipeline of small single-purpose scripts sharing one SQLite database
 - `parseAs(as_info, org, isp)` lives in `db.js` (shared by summary + topo); splits
   ip-api's `"AS#### Name"` into `{asn, asnNum, name}`. `cleanName()` (also in db.js)
   strips registry-noise quotes from operator names.
-- `rpki.js` (`rpki`) — RIPEstat RPKI route-origin validity per /24 → `rpki` table.
+- `commands/rpki.js` (`rpki`) — RIPEstat RPKI route-origin validity per /24 → `rpki` table.
   `network-info(IP)` → covering prefix + origin ASN, then `rpki-validation` →
-  valid/invalid/unknown. `topo.js` aggregates this per ASN for a "colour by RPKI"
+  valid/invalid/unknown. `commands/topo.js` aggregates this per ASN for a "colour by RPKI"
   toggle on the topology page.
-- **RIPEstat rate limits** (used by `topo.js` + `rpki.js`): always add
-  `sourceapp=dht-explorer`; max 8 concurrent/IP (we go sequential + spaced); cache
+- **RIPEstat rate limits** (used by `commands/topo.js` + `commands/rpki.js`): always add
+  `sourceapp=hyperdht-explorer`; max 8 concurrent/IP (we go sequential + spaced); cache
   and refetch weekly; reuse one covering prefix across the /24s it contains.
-- `observe.js` (`observe`) — seed-and-listen: announces an ephemeral keypair under a
+- `commands/observe.js` (`observe`) — seed-and-listen: announces an ephemeral keypair under a
   public topic's discovery key, records connecting peers (incl. NAT'd) into the
   `observations` table via `conn.rawStream.remoteHost/remotePort`. Self-timed
   (`--minutes`); HEALTH-ONLY (aggregate, public topics, never deanonymize — see the
-  `project-intent-health-not-deanon` memory). `scheduled-observe.sh` runs it on a
+  `project-intent-health-not-deanon` memory). `ops/scheduled-observe.sh` runs it on a
   separate cron schedule (env: OBSERVE_LINK/OBSERVE_APP/OBSERVE_MINUTES).
 - `hostKind(geoRow)` (db.js) classifies a network datacenter/mobile/proxy/residential
   from ip-api's `hosting`/`mobile`/`proxy` flags (geo.js fetches them; backfills older
@@ -92,7 +117,7 @@ A pipeline of small single-purpose scripts sharing one SQLite database
 - `rpki` — PK `prefix24`. RIPEstat RPKI validity: `covering`, `origin_asn`,
   `status` (valid/invalid/unknown/unannounced), `fetched_at`.
 - `observations` — PK `(public_key, host, port)`. Peers seen connecting via
-  `observe.js`: `app`, `first_seen`, `last_seen`, `count`. `snapshots.observed` =
+  `commands/observe.js`: `app`, `first_seen`, `last_seen`, `count`. `snapshots.observed` =
   `COUNT(DISTINCT public_key)`, trended on the timeline.
 
 Schema changes go in `db.js`: add the column to `CREATE TABLE` **and** add a
@@ -108,7 +133,7 @@ persists between runs, so always migrate rather than assuming a fresh DB.
   but you cannot list announced services from random keys. Lookups require a
   known 32-byte target. Don't add features that assume otherwise.
 - DHT node `id` is `hash(ip:port)` for ordinary nodes — **not** a connectable
-  public key. Only announcer `publicKey`s (from `seeders.js`) are connectable.
+  public key. Only announcer `publicKey`s (from `commands/seeders.js`) are connectable.
 - The full node RPC vocabulary (PING, FIND_NODE, LOOKUP, ANNOUNCE, MUTABLE/
   IMMUTABLE GET/PUT, PEER_HANDSHAKE…) has **no** "what are you running/seeding"
   command. Probing is limited to liveness.
@@ -118,9 +143,10 @@ persists between runs, so always migrate rather than assuming a fresh DB.
 
 ## Scheduling
 
-`scheduled-scan.sh` runs one cron-driven cycle (scan `--for 120` → geo → probe),
-appending to `scan.log`. It self-resolves its dir, sets `PATH`/`VOLTA_HOME` (cron
-has a minimal env; node/npx are Volta-managed), and holds an mkdir lock
+`ops/scheduled-scan.sh` runs one cron-driven cycle (scan `--for 120` → geo → probe),
+appending to `scan.log`. It self-resolves the project root (it lives in `ops/`),
+sets `PATH`/`VOLTA_HOME` (cron has a minimal env; the global `bare` binary —
+`npm i -g bare-runtime` — must be on PATH), and holds an mkdir lock
 (`.scan.lock`) to prevent overlap. Setup + the macOS Full-Disk-Access gotcha are
 in `SCHEDULING.md`. Bounded `--for` (not signals/`timeout`) is what makes the
 cycle exit cleanly and write its snapshot.
@@ -130,8 +156,8 @@ cycle exit cleanly and write its snapshot.
 - Keep each script standalone and runnable via its `npm run` alias; share only
   through `db.js`.
 - ip-api.com is HTTP-only on the free tier and rate-limited — preserve the
-  `/24` dedupe + header backoff in `geo.js`.
-- `map.js` pulls Leaflet from a CDN; the map needs internet to render tiles.
+  `/24` dedupe + header backoff in `commands/geo.js`.
+- `commands/map.js` pulls Leaflet from a CDN; the map needs internet to render tiles.
 - Be honest in output about limitations (relay vs. client addresses, wall-clock
   RTT including local latency, seeders ≠ all installs). Existing code says so;
   keep that tone.

@@ -1,6 +1,7 @@
 import process from 'bare-process'
 import fs from 'bare-fs'
-import { openDb, prefixOf } from './db.js'
+import { openDb, prefixOf } from '../db.js'
+import { htmlPath, ensureDirs } from '../paths.js'
 
 // Render how the DHT network evolves over time -> timeline.html.
 // Four views:
@@ -13,135 +14,149 @@ import { openDb, prefixOf } from './db.js'
 // improve as the observed span grows). View 3 reads the `snapshots` table that the
 // crawler writes at the end of each run, so it fills in going forward.
 
-const db = openDb()
-const HOUR = 3600 * 1000
-const now = Date.now()
+export function run(ctx) {
+  const db = openDb()
+  const HOUR = 3600 * 1000
+  const now = Date.now()
 
-const nodes = db.prepare('SELECT first_seen, last_seen FROM nodes').all()
-const snapshots = db.prepare('SELECT * FROM snapshots ORDER BY ts').all()
-const storeProbes = db.prepare('SELECT * FROM store_probes ORDER BY ts').all()
+  const nodes = db.prepare('SELECT first_seen, last_seen FROM nodes').all()
+  const snapshots = db.prepare('SELECT * FROM snapshots ORDER BY ts').all()
+  const storeProbes = db.prepare('SELECT * FROM store_probes ORDER BY ts').all()
 
-function fmt(ts) {
-  const d = new Date(ts)
-  const p = (n) => String(n).padStart(2, '0')
-  return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:00`
-}
+  function fmt(ts) {
+    const d = new Date(ts)
+    const p = (n) => String(n).padStart(2, '0')
+    return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:00`
+  }
 
-// --- hourly buckets across the observed span --------------------------------
-let labels = []
-let newPerHour = []
-let departuresPerHour = []
-let cumulative = []
-let presence = []
-let diurnal = new Array(24).fill(0).map(() => ({ sum: 0, n: 0 }))
+  // --- hourly buckets across the observed span --------------------------------
+  const labels = []
+  const newPerHour = []
+  const departuresPerHour = []
+  const cumulative = []
+  const presence = []
+  const diurnal = new Array(24).fill(0).map(() => ({ sum: 0, n: 0 }))
 
-if (nodes.length) {
-  const minT = nodes.reduce((m, r) => Math.min(m, r.first_seen), Infinity)
-  const start = Math.floor(minT / HOUR) * HOUR
-  const activeCutoff = now - HOUR // nodes seen within the last hour count as still present
+  if (nodes.length) {
+    const minT = nodes.reduce((m, r) => Math.min(m, r.first_seen), Infinity)
+    const start = Math.floor(minT / HOUR) * HOUR
+    const activeCutoff = now - HOUR // nodes seen within the last hour count as still present
 
-  let cum = 0
-  for (let t = start; t <= now; t += HOUR) {
-    const mid = t + HOUR / 2
-    let nu = 0
-    let dep = 0
-    let pres = 0
-    for (const r of nodes) {
-      if (r.first_seen >= t && r.first_seen < t + HOUR) nu++
-      if (r.last_seen < activeCutoff && r.last_seen >= t && r.last_seen < t + HOUR) dep++
-      if (r.first_seen <= mid && r.last_seen >= mid) pres++
+    let cum = 0
+    for (let t = start; t <= now; t += HOUR) {
+      const mid = t + HOUR / 2
+      let nu = 0
+      let dep = 0
+      let pres = 0
+      for (const r of nodes) {
+        if (r.first_seen >= t && r.first_seen < t + HOUR) nu++
+        if (r.last_seen < activeCutoff && r.last_seen >= t && r.last_seen < t + HOUR) dep++
+        if (r.first_seen <= mid && r.last_seen >= mid) pres++
+      }
+      cum += nu
+      labels.push(fmt(t))
+      newPerHour.push(nu)
+      departuresPerHour.push(-dep) // negative so births/deaths mirror around zero
+      cumulative.push(cum)
+      presence.push(pres)
+      const hod = new Date(t).getHours()
+      diurnal[hod].sum += pres
+      diurnal[hod].n++
     }
-    cum += nu
-    labels.push(fmt(t))
-    newPerHour.push(nu)
-    departuresPerHour.push(-dep) // negative so births/deaths mirror around zero
-    cumulative.push(cum)
-    presence.push(pres)
-    const hod = new Date(t).getHours()
-    diurnal[hod].sum += pres
-    diurnal[hod].n++
   }
-}
-const diurnalAvg = diurnal.map((d) => (d.n ? Math.round(d.sum / d.n) : 0))
+  const diurnalAvg = diurnal.map((d) => (d.n ? Math.round(d.sum / d.n) : 0))
 
-// --- survival / retention curve ---------------------------------------------
-const ages = nodes.map((r) => (r.last_seen - r.first_seen) / HOUR).sort((a, b) => a - b)
-const survival = []
-if (ages.length) {
-  const maxAge = ages[ages.length - 1] || 1
-  const steps = 40
-  for (let i = 0; i <= steps; i++) {
-    const x = (maxAge * i) / steps
-    const surviving = ages.length - lowerBound(ages, x)
-    survival.push({ x: Math.round(x * 10) / 10, y: Math.round((surviving / ages.length) * 1000) / 10 })
+  // --- survival / retention curve ---------------------------------------------
+  const ages = nodes.map((r) => (r.last_seen - r.first_seen) / HOUR).sort((a, b) => a - b)
+  const survival = []
+  if (ages.length) {
+    const maxAge = ages[ages.length - 1] || 1
+    const steps = 40
+    for (let i = 0; i <= steps; i++) {
+      const x = (maxAge * i) / steps
+      const surviving = ages.length - lowerBound(ages, x)
+      survival.push({
+        x: Math.round(x * 10) / 10,
+        y: Math.round((surviving / ages.length) * 1000) / 10
+      })
+    }
   }
-}
-function lowerBound(arr, v) {
-  let lo = 0
-  let hi = arr.length
-  while (lo < hi) {
-    const m = (lo + hi) >> 1
-    if (arr[m] < v) lo = m + 1
-    else hi = m
+  function lowerBound(arr, v) {
+    let lo = 0
+    let hi = arr.length
+    while (lo < hi) {
+      const m = (lo + hi) >> 1
+      if (arr[m] < v) lo = m + 1
+      else hi = m
+    }
+    return lo
   }
-  return lo
-}
 
-// --- snapshot series --------------------------------------------------------
-const snap = {
-  labels: snapshots.map((s) => fmt(s.ts)),
-  total: snapshots.map((s) => s.total_nodes),
-  alive: snapshots.map((s) => s.alive),
-  seeders: snapshots.map((s) => s.seeders),
-  countries: snapshots.map((s) => s.countries),
-  medianRtt: snapshots.map((s) => s.median_rtt),
-  observed: snapshots.map((s) => s.observed)
-}
-
-// --- storage-health series (storeprobe.js) ----------------------------------
-const store = {
-  labels: storeProbes.map((s) => fmt(s.ts)),
-  putPct: storeProbes.map((s) => (s.canaries ? Math.round((s.put_ok / s.canaries) * 100) : 0)),
-  getPct: storeProbes.map((s) => (s.put_ok ? Math.round((s.get_ok / s.put_ok) * 100) : 0)),
-  persistPct: storeProbes.map((s) => Math.round((s.persistence || 0) * 100)),
-  repInitial: storeProbes.map((s) => Math.round((s.replicas_initial || 0) * 10) / 10),
-  repAfter: storeProbes.map((s) => Math.round((s.replicas_after || 0) * 10) / 10)
-}
-// decay curve (replicas vs minutes-since-put) from the most recent probe
-let decay = []
-for (let i = storeProbes.length - 1; i >= 0; i--) {
-  if (storeProbes[i].decay) {
-    try {
-      decay = JSON.parse(storeProbes[i].decay)
-    } catch {}
-    break
+  // --- snapshot series --------------------------------------------------------
+  const snap = {
+    labels: snapshots.map((s) => fmt(s.ts)),
+    total: snapshots.map((s) => s.total_nodes),
+    alive: snapshots.map((s) => s.alive),
+    seeders: snapshots.map((s) => s.seeders),
+    countries: snapshots.map((s) => s.countries),
+    medianRtt: snapshots.map((s) => s.median_rtt),
+    observed: snapshots.map((s) => s.observed)
   }
-}
-store.decay = decay.map((d) => ({ x: d.m, y: d.replicas }))
-store.ttl = 20 // hyperdht record TTL (minutes), for the marker line
 
-console.log(
-  `timeline: ${nodes.length} nodes over ${labels.length} hourly buckets, ${snapshots.length} snapshot(s), ${storeProbes.length} store-probe(s)`
-)
+  // --- storage-health series (storeprobe.js) ----------------------------------
+  const store = {
+    labels: storeProbes.map((s) => fmt(s.ts)),
+    putPct: storeProbes.map((s) => (s.canaries ? Math.round((s.put_ok / s.canaries) * 100) : 0)),
+    getPct: storeProbes.map((s) => (s.put_ok ? Math.round((s.get_ok / s.put_ok) * 100) : 0)),
+    persistPct: storeProbes.map((s) => Math.round((s.persistence || 0) * 100)),
+    repInitial: storeProbes.map((s) => Math.round((s.replicas_initial || 0) * 10) / 10),
+    repAfter: storeProbes.map((s) => Math.round((s.replicas_after || 0) * 10) / 10)
+  }
+  // decay curve (replicas vs minutes-since-put) from the most recent probe
+  let decay = []
+  for (let i = storeProbes.length - 1; i >= 0; i--) {
+    if (storeProbes[i].decay) {
+      try {
+        decay = JSON.parse(storeProbes[i].decay)
+      } catch {}
+      break
+    }
+  }
+  store.decay = decay.map((d) => ({ x: d.m, y: d.replicas }))
+  store.ttl = 20 // hyperdht record TTL (minutes), for the marker line
 
-const DATA = { labels, newPerHour, departuresPerHour, cumulative, presence, survival, diurnalAvg, snap, store }
+  console.log(
+    `timeline: ${nodes.length} nodes over ${labels.length} hourly buckets, ${snapshots.length} snapshot(s), ${storeProbes.length} store-probe(s)`
+  )
 
-// --- Pear-inspired theme ----------------------------------------------------
-const BG = '#060a08'
-const PANEL = '#0b1410'
-const TEXT = '#eafff2'
-const MUTED = '#5f7d6e'
-const GREEN = '#b6ff3c'
-const GREEN2 = '#5bd06a'
-const CYAN = '#4cd9ff'
-const SEEDER = '#ff2bd6'
-const RED = '#e67e22'
+  const DATA = {
+    labels,
+    newPerHour,
+    departuresPerHour,
+    cumulative,
+    presence,
+    survival,
+    diurnalAvg,
+    snap,
+    store
+  }
 
-const html = `<!DOCTYPE html>
+  // --- Pear-inspired theme ----------------------------------------------------
+  const BG = '#060a08'
+  const PANEL = '#0b1410'
+  const TEXT = '#eafff2'
+  const MUTED = '#5f7d6e'
+  const GREEN = '#b6ff3c'
+  const GREEN2 = '#5bd06a'
+  const CYAN = '#4cd9ff'
+  const SEEDER = '#ff2bd6'
+  const RED = '#e67e22'
+
+  const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>dht-explorer · timeline</title>
+  <title>hyperdht-explorer · timeline</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
@@ -164,7 +179,7 @@ const html = `<!DOCTYPE html>
 </head>
 <body>
   <div class="wrap">
-    <h1>dht-explorer · <span class="accent">timeline</span></h1>
+    <h1>hyperdht-explorer · <span class="accent">timeline</span></h1>
     <div class="sub">how the DHT population evolves over time &middot; ${nodes.length} nodes, ${snapshots.length} snapshot(s)</div>
 
     <div class="card">
@@ -333,9 +348,10 @@ const html = `<!DOCTYPE html>
 </html>
 `
 
-fs.writeFileSync('timeline.html', html)
-const cwd = (process.cwd && process.cwd()) || '.'
-console.log('timeline: wrote timeline.html')
-console.log(`open it in a browser:  file://${cwd}/timeline.html`)
-db.close()
-process.exit(0)
+  ensureDirs()
+  const out = htmlPath('timeline.html')
+  fs.writeFileSync(out, html)
+  console.log('timeline: wrote timeline.html')
+  console.log(`open it in a browser:  file://${out}`)
+  db.close()
+}

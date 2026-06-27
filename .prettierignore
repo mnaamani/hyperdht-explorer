@@ -1,8 +1,5 @@
 node_modules
 package-lock.json
-# generated artifacts
-*.html
-nodes.db
-nodes.db-wal
-nodes.db-shm
+# build output
+out/
 scan.log

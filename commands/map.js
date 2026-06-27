@@ -1,6 +1,7 @@
 import process from 'bare-process'
 import fs from 'bare-fs'
-import { openDb, prefixOf, hostKind } from './db.js'
+import { openDb, prefixOf, hostKind } from '../db.js'
+import { htmlPath, ensureDirs } from '../paths.js'
 
 // Render the discovered + geo-located nodes onto an interactive world map.
 // Produces a self-contained map.html (Leaflet from CDN, data embedded inline),
@@ -8,104 +9,111 @@ import { openDb, prefixOf, hostKind } from './db.js'
 // stability: how many distinct crawl sessions the network's nodes have appeared
 // in (red = transient, green = long-lived / likely dedicated).
 
-const db = openDb()
+export function run(ctx) {
+  const db = openDb()
 
-// geo rows keyed by /24 prefix (only successfully located networks)
-const geo = new Map()
-for (const g of db.prepare("SELECT * FROM geo WHERE status = 'success' AND lat IS NOT NULL").all()) {
-  geo.set(g.prefix, g)
-}
+  // geo rows keyed by /24 prefix (only successfully located networks)
+  const geo = new Map()
+  for (const g of db
+    .prepare("SELECT * FROM geo WHERE status = 'success' AND lat IS NOT NULL")
+    .all()) {
+    geo.set(g.prefix, g)
+  }
 
-// aggregate node stats per /24
-const groups = new Map()
-for (const n of db
-  .prepare('SELECT host, port, sessions, seen_count, first_seen, last_seen, alive, rtt_ms, app_seeder FROM nodes')
-  .all()) {
-  const prefix = prefixOf(n.host)
-  const g = geo.get(prefix)
-  if (!g) continue
-  let agg = groups.get(prefix)
-  if (!agg) {
-    agg = {
-      prefix,
-      lat: g.lat,
-      lon: g.lon,
-      city: g.city,
-      country: g.country,
-      isp: g.isp,
-      org: g.org,
-      nodes: 0,
-      hits: 0,
-      maxSessions: 0,
-      firstSeen: n.first_seen,
-      lastSeen: n.last_seen,
-      aliveNodes: 0,
-      probed: 0,
-      minRtt: null,
-      apps: new Set()
+  // aggregate node stats per /24
+  const groups = new Map()
+  for (const n of db
+    .prepare(
+      'SELECT host, port, sessions, seen_count, first_seen, last_seen, alive, rtt_ms, app_seeder FROM nodes'
+    )
+    .all()) {
+    const prefix = prefixOf(n.host)
+    const g = geo.get(prefix)
+    if (!g) continue
+    let agg = groups.get(prefix)
+    if (!agg) {
+      agg = {
+        prefix,
+        lat: g.lat,
+        lon: g.lon,
+        city: g.city,
+        country: g.country,
+        isp: g.isp,
+        org: g.org,
+        nodes: 0,
+        hits: 0,
+        maxSessions: 0,
+        firstSeen: n.first_seen,
+        lastSeen: n.last_seen,
+        aliveNodes: 0,
+        probed: 0,
+        minRtt: null,
+        apps: new Set()
+      }
+      groups.set(prefix, agg)
     }
-    groups.set(prefix, agg)
-  }
-  agg.nodes++
-  agg.hits += n.seen_count
-  agg.maxSessions = Math.max(agg.maxSessions, n.sessions)
-  agg.firstSeen = Math.min(agg.firstSeen, n.first_seen)
-  agg.lastSeen = Math.max(agg.lastSeen, n.last_seen)
-  if (n.alive !== null) agg.probed++
-  if (n.alive === 1) {
-    agg.aliveNodes++
-    if (n.rtt_ms !== null) agg.minRtt = agg.minRtt === null ? n.rtt_ms : Math.min(agg.minRtt, n.rtt_ms)
-  }
-  if (n.app_seeder) agg.apps.add(n.app_seeder)
-}
-
-// Set -> sorted array so it serialises to JSON for the page.
-const points = [...groups.values()].map((p) => ({ ...p, apps: [...p.apps].sort() }))
-const totalNodes = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n
-const located = points.reduce((s, p) => s + p.nodes, 0)
-
-// observed participants (observe.js) grouped by /24
-const obs = new Map()
-for (const o of db.prepare('SELECT host, app, public_key FROM observations').all()) {
-  const g = geo.get(prefixOf(o.host))
-  if (!g) continue
-  let a = obs.get(g.prefix)
-  if (!a) {
-    a = {
-      prefix: g.prefix,
-      lat: g.lat,
-      lon: g.lon,
-      city: g.city,
-      country: g.country,
-      kind: hostKind(g),
-      apps: new Set(),
-      peers: new Set()
+    agg.nodes++
+    agg.hits += n.seen_count
+    agg.maxSessions = Math.max(agg.maxSessions, n.sessions)
+    agg.firstSeen = Math.min(agg.firstSeen, n.first_seen)
+    agg.lastSeen = Math.max(agg.lastSeen, n.last_seen)
+    if (n.alive !== null) agg.probed++
+    if (n.alive === 1) {
+      agg.aliveNodes++
+      if (n.rtt_ms !== null) {
+        agg.minRtt = agg.minRtt === null ? n.rtt_ms : Math.min(agg.minRtt, n.rtt_ms)
+      }
     }
-    obs.set(g.prefix, a)
+    if (n.app_seeder) agg.apps.add(n.app_seeder)
   }
-  if (o.app) a.apps.add(o.app)
-  a.peers.add(o.public_key)
-}
-const observed = [...obs.values()].map((a) => ({
-  prefix: a.prefix,
-  lat: a.lat,
-  lon: a.lon,
-  city: a.city,
-  country: a.country,
-  kind: a.kind,
-  apps: [...a.apps].sort(),
-  peers: a.peers.size
-}))
 
-console.log(
-  `map: ${points.length} networks, ${located}/${totalNodes} nodes located, ${observed.length} observed-peer network(s)`
-)
+  // Set -> sorted array so it serialises to JSON for the page.
+  const points = [...groups.values()].map((p) => ({ ...p, apps: [...p.apps].sort() }))
+  const totalNodes = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n
+  const located = points.reduce((s, p) => s + p.nodes, 0)
 
-const html = `<!DOCTYPE html>
+  // observed participants (observe.js) grouped by /24
+  const obs = new Map()
+  for (const o of db.prepare('SELECT host, app, public_key FROM observations').all()) {
+    const g = geo.get(prefixOf(o.host))
+    if (!g) continue
+    let a = obs.get(g.prefix)
+    if (!a) {
+      a = {
+        prefix: g.prefix,
+        lat: g.lat,
+        lon: g.lon,
+        city: g.city,
+        country: g.country,
+        kind: hostKind(g),
+        apps: new Set(),
+        peers: new Set()
+      }
+      obs.set(g.prefix, a)
+    }
+    if (o.app) a.apps.add(o.app)
+    a.peers.add(o.public_key)
+  }
+  const observed = [...obs.values()].map((a) => ({
+    prefix: a.prefix,
+    lat: a.lat,
+    lon: a.lon,
+    city: a.city,
+    country: a.country,
+    kind: a.kind,
+    apps: [...a.apps].sort(),
+    peers: a.peers.size
+  }))
+
+  console.log(
+    `map: ${points.length} networks, ${located}/${totalNodes} nodes located, ${observed.length} observed-peer network(s)`
+  )
+
+  const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>dht-explorer map</title>
+  <title>hyperdht-explorer map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
@@ -241,9 +249,10 @@ const html = `<!DOCTYPE html>
 </html>
 `
 
-fs.writeFileSync('map.html', html)
-const cwd = (process.cwd && process.cwd()) || '.'
-console.log(`map: wrote map.html (${points.length} markers)`)
-console.log(`open it in a browser:  file://${cwd}/map.html`)
-db.close()
-process.exit(0)
+  ensureDirs()
+  const out = htmlPath('map.html')
+  fs.writeFileSync(out, html)
+  console.log(`map: wrote map.html (${points.length} markers)`)
+  console.log(`open it in a browser:  file://${out}`)
+  db.close()
+}
