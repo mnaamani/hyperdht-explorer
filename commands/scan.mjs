@@ -308,11 +308,13 @@ export async function run(ctx) {
     resolveRun()
   }
 
-  // Best-effort: the current Bare runtime doesn't deliver these to JS, so prefer
-  // the --for / --queries options above for a guaranteed clean shutdown. Harmless
-  // to register in case a future runtime does support them.
-  process.on?.('SIGINT', shutdown)
-  process.on?.('SIGTERM', shutdown)
+  // bin.mjs owns signal handling and invokes this via ctx.onShutdown, so SIGINT/
+  // SIGTERM print the summary + write a snapshot before exiting. Whether the signal
+  // actually reaches JS depends on the runtime forwarding it (standalone/pear build
+  // vs plain `bare bin.mjs` — see CLAUDE.md); for a guaranteed clean stop under dev
+  // prefer the --for / --queries options above. `teardown` is a safety net for any
+  // runtime-driven teardown.
+  ctx.onShutdown?.(shutdown)
   globalThis.Bare?.on?.('teardown', shutdown)
 
   crawl().catch((err) => {

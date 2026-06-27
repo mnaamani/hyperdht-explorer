@@ -7,7 +7,7 @@
   "private": true,
   "main": "bin.mjs",
   "bin": "bin.mjs",
-  "upgrade": "pear://<YOUR_KEY_HERE>",
+  "upgrade": "pear://zn3orhc8fe1qoo48edpu1x8e6of9ufbxg7ixjinigcbfgurgnnny",
   "scripts": {
     "start": "bare bin.mjs",
     "scan": "bare bin.mjs scan",

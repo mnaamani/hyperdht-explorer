@@ -115,12 +115,46 @@ if (updates) {
   }
 }
 
+// --- graceful shutdown on signals ---------------------------------------------
+// `Bare` is itself a bare EventEmitter; the runtime does NOT install OS signal
+// watchers, so `Bare.on('SIG…')` only fires when something forwards the signal as
+// a Bare event. The standalone build / pear bootstrap can do that forwarding; a
+// plain `bare bin.mjs` dev run generally does not (use --for/--queries there). See
+// the signal note in CLAUDE.md. Best-effort path: ask the running command to wind
+// down (commands register a callback via ctx.onShutdown — e.g. scan prints its
+// summary + writes a snapshot), tear down the updater, then exit with the
+// conventional 128+signal code.
+const shutdownHooks = []
+let signalled = 0
+async function onSignal(code) {
+  if (signalled) return // ignore repeats once we're already winding down
+  signalled = code
+  try {
+    for (const fn of shutdownHooks) await fn()
+  } catch {}
+  if (app) {
+    try {
+      await app.close()
+    } catch {}
+  }
+  Bare.exit(code)
+}
+Bare.on('SIGHUP', () => onSignal(129))
+Bare.on('SIGINT', () => onSignal(130))
+Bare.on('SIGQUIT', () => onSignal(131))
+Bare.on('SIGTERM', () => onSignal(143))
+
 // --- dispatch -----------------------------------------------------------------
 let code = 0
 try {
   const mod = await COMMANDS[cmdName]()
   // Synthetic argv preserves each command's existing argv[2..] parsing verbatim.
-  const ctx = { argv: [Bare.argv[0], cmdName, ...rest.slice(1)], dir }
+  // ctx.onShutdown lets a command register a graceful-stop callback for signals.
+  const ctx = {
+    argv: [Bare.argv[0], cmdName, ...rest.slice(1)],
+    dir,
+    onShutdown: (fn) => shutdownHooks.push(fn)
+  }
   await mod.run(ctx)
 } catch (err) {
   console.error('error:', err?.stack || err)
@@ -133,4 +167,4 @@ try {
   }
 }
 
-Bare.exit(code)
+Bare.exit(signalled || code)

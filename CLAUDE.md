@@ -26,13 +26,29 @@ with `bare bin.mjs <command> [args]` (or its `npm run <command>` alias).
   receive a synthetic `ctx.argv` (= `[arg0, cmdName, ...rest]`, so their existing
   `argv[2..]` parsing is unchanged) and must **return** instead of calling
   `process.exit` — exiting from inside a command would skip the updater teardown.
-- **Signals don't reach JS in this Bare build.** Neither `process.on('SIGINT'/
-'SIGTERM')` (bare-process) nor `new Signal('SIGTERM').start()` (bare-signals)
-  fires — the process dies by default disposition. So `timeout bare …`
-  hard-kills and skips cleanup. For bounded/scheduled runs use in-code limits
-  instead: `scan` supports `--for <seconds>` and `--queries <n>`, which resolve
-  the command's `run()` promise themselves (summary + clean exit). Don't rely on
-  signal handlers.
+- **Signals don't reach JS on this toolchain — and it's the latest** (bare-runtime
+  1.29.5, bare-build 1.0.2, bare-signals 4.2.0, bare-process 4.5.0, all current as of
+  2026-06; a fresh hello-pear-bare clone gets the same, so it isn't version skew).
+  Empirically verified across every API — `Bare.on('SIG…')` (the hello-pear-bare
+  approach), `process.on('SIGINT'/'SIGTERM')` (bare-process, what `graceful-goodbye`
+  uses), and `new Signal('SIG…').start()` (bare-signals, refs stored so no GC) — in
+  **both** dev (`bare bin.mjs`) and a **standalone** bare-build binary, with and
+  without the pear-runtime worker (it's a `bare-thread`, doesn't change the parent's
+  signal disposition). With no worker, signals hit the OS default disposition
+  (SIGTERM→143, SIGINT→130); with the worker running, **SIGINT is swallowed** (the
+  process neither dies nor calls back — Ctrl-C hangs `--updates` runs). Net: no JS
+  callback ever fires. (Even hello-pear-bare itself: build it standalone, run it in a
+  terminal, press Ctrl-C — it exits **0**, a clean loop-drain. Its
+  `Bare.on('SIGINT', () => app.exit(130))` would force exit 130 if it ran, so exit 0
+  proves the handler didn't fire there either; "it exited on Ctrl-C" is the idle loop
+  draining, not the handler.) So `timeout bare …` hard-kills and skips cleanup.
+  `bin.mjs`
+  still registers best-effort `Bare.on('SIGHUP'/'SIGINT'/'SIGQUIT'/'SIGTERM')`
+  handlers driving a graceful shutdown (`ctx.onShutdown` hooks → e.g. `scan`'s
+  summary + snapshot → close updater → exit 128+sig) — harmless and forward-
+  compatible, but **inert here**. For a guaranteed clean stop use in-code limits:
+  `scan` supports `--for <seconds>` and `--queries <n>`, which resolve the command's
+  `run()` promise themselves. Don't _rely_ on signal handlers.
 
 ## Architecture
 
