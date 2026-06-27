@@ -1,6 +1,6 @@
 import DHT from 'hyperdht'
 import process from 'bare-process'
-import { openDb } from '../db.js'
+import { openDb } from '../db.mjs'
 
 // Probe discovered nodes with a DHT PING to record whether they're currently
 // reachable and how fast they respond. This is the only "interrogation" the

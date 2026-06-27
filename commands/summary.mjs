@@ -1,7 +1,7 @@
 import process from 'bare-process'
 import fs from 'bare-fs'
-import { openDb, prefixOf, parseAs, hostKind } from '../db.js'
-import { htmlPath, ensureDirs } from '../paths.js'
+import { openDb, prefixOf, parseAs, hostKind } from '../db.mjs'
+import { htmlPath, ensureDirs } from '../paths.mjs'
 
 // Network summary -> summary.html. Two sortable/filterable tables:
 //   1. by operator (ASN / org)  - the "who hosts the DHT" leaderboard

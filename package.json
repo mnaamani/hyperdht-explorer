@@ -2,9 +2,11 @@
   "name": "hyperdht-explorer",
   "version": "1.0.0",
   "description": "Pear-runtime standalone CLI that explores and monitors the hyperdht network",
+  "author": "Mokhtar Naamani",
+  "license": "Apache-2.0",
+  "private": true,
   "main": "bin.mjs",
   "bin": "bin.mjs",
-  "type": "module",
   "upgrade": "pear://<YOUR_KEY_HERE>",
   "scripts": {
     "start": "bare bin.mjs",
@@ -29,11 +31,9 @@
     "make:linux-x64": "bare-build --name hyperdht-explorer --standalone --host linux-x64 --out ./out/linux-x64 bin.mjs",
     "make:win32-arm64": "bare-build --name hyperdht-explorer --standalone --host win32-arm64 --out ./out/win32-arm64 bin.mjs",
     "make:win32-x64": "bare-build --name hyperdht-explorer --standalone --host win32-x64 --out ./out/win32-x64 bin.mjs",
-    "test": "brittle-bare test/index.js"
+    "test": "brittle-bare test/index.mjs"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "b4a": "^1.8.1",
     "bare-fetch": "^3.0.1",

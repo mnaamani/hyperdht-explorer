@@ -1,6 +1,6 @@
 import process from 'bare-process'
 import fetch from 'bare-fetch'
-import { openDb, prefixOf } from '../db.js'
+import { openDb, prefixOf } from '../db.mjs'
 
 // Enrich the networks hosting DHT nodes with RPKI route-origin validity, from
 // RIPEstat. For each /24 we find its real announced (covering) prefix + origin

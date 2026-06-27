@@ -1,10 +1,10 @@
 import { DatabaseSync } from 'bare-sqlite'
-import { dbPath, ensureDirs } from './paths.js'
+import { dbPath, ensureDirs } from './paths.mjs'
 
 // Shared database access for the hyperdht-explorer tools (crawler, geo, map).
 //
 // Two tables:
-//   nodes - one row per discovered host:port (see index.js for tracking logic)
+//   nodes - one row per discovered host:port (see scan.mjs for tracking logic)
 //   geo   - one row per /24 subnet (255.255.255.0). We assume any two IPs that
 //           share the first three octets sit in the same network and therefore
 //           the same geo-location, so we only ever hit the geoip API once per
@@ -49,7 +49,7 @@ export function openDb(path = dbPath()) {
       queried_at   INTEGER NOT NULL
     );
 
-    -- Peers observed CONNECTING to us while seeding a public topic (observe.js).
+    -- Peers observed CONNECTING to us while seeding a public topic (observe.mjs).
     -- Aggregate health data only — never used to track individuals.
     CREATE TABLE IF NOT EXISTS observations (
       public_key TEXT NOT NULL,
@@ -72,7 +72,7 @@ export function openDb(path = dbPath()) {
       asns        INTEGER,              -- distinct located networks (AS)
       seeders     INTEGER,              -- nodes tagged app_seeder
       median_rtt  INTEGER,
-      observed    INTEGER               -- distinct participants seen via observe.js
+      observed    INTEGER               -- distinct participants seen via observe.mjs
     );
 
     -- AS-level BGP topology (from RIPEstat OSINT), cached so we don't refetch.

@@ -14,14 +14,14 @@ producing a far more complete and less geographically biased census than any one
 machine can — with the DHT itself as the coordination layer.
 
 This is the "Angle 2" from the put/get discussion. "Angle 1" (the storage-
-reliability probe, `storeprobe.js`) is already implemented; this document is the
+reliability probe, `storeprobe.mjs`) is already implemented; this document is the
 larger architectural follow-on, deliberately deferred.
 
 ## Why the DHT is the right substrate
 
 - We're already _on_ the network — no extra servers, accounts, or central registry.
 - The pieces map cleanly onto primitives we already use:
-  - **`announce` / `lookup`** (see `seeders.js`) → rendezvous: find other explorers.
+  - **`announce` / `lookup`** (see `seeders.mjs`) → rendezvous: find other explorers.
   - **mutable records** (hyperdht's signed BEP44-style put/get) → each explorer's signed pointer.
   - **hypercore replication** → move the actual (large) datasets peer-to-peer.
 
@@ -36,7 +36,7 @@ topic = hash("hyperdht-explorer/federation/v1")
 ```
 
 A `lookup` on that topic yields the set of currently-online explorer instances
-(their connectable public keys) — exactly the mechanism `seeders.js` uses for Keet.
+(their connectable public keys) — exactly the mechanism `seeders.mjs` uses for Keet.
 
 ### 2. Per-explorer pointer record
 
@@ -118,9 +118,9 @@ anything under their own key.
 
 ## Relationship to existing code
 
-- `seeders.js` already demonstrates the announce/lookup rendezvous against a real
+- `seeders.mjs` already demonstrates the announce/lookup rendezvous against a real
   topic — reuse its lookup path.
-- hyperdht's signed mutable put/get is the manifest record mechanism (`storeprobe.js`
+- hyperdht's signed mutable put/get is the manifest record mechanism (`storeprobe.mjs`
   exercises the immutable variant of the same DHT storage path).
 - The geo/probe/map/ring/timeline pipeline is unchanged; it just reads a richer,
   merged `nodes.db`.

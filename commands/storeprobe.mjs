@@ -3,7 +3,7 @@ import b4a from 'b4a'
 import crypto from 'hypercore-crypto'
 import process from 'bare-process'
 import constants from 'hyperdht/lib/constants.js'
-import { openDb } from '../db.js'
+import { openDb } from '../db.mjs'
 
 // Storage-reliability probe: measure how well the DHT actually STORES data — a
 // dimension that pinging nodes can't reveal.

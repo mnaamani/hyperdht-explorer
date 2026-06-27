@@ -3,7 +3,7 @@ import b4a from 'b4a'
 import crypto from 'hypercore-crypto'
 import idEnc from 'hypercore-id-encoding'
 import process from 'bare-process'
-import { openDb, prefixOf, hostKind, isPrivateIp } from '../db.js'
+import { openDb, prefixOf, hostKind, isPrivateIp } from '../db.mjs'
 
 // Seed-and-listen: announce ourselves under a PUBLIC topic (e.g. a Pear app's
 // update feed) and record the peers that connect to us. This surfaces real,

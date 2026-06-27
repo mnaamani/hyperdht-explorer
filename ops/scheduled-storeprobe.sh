@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# One DHT storage-reliability probe, for cron. Runs storeprobe.js, which spans
+# One DHT storage-reliability probe, for cron. Runs storeprobe.mjs, which spans
 # hyperdht's ~20-min record TTL (~22 min/run), then refreshes the timeline page so
 # the decay/persistence charts stay current. Scheduled SEPARATELY from the 15-min
 # scan cycle because of its length (see SCHEDULING.md).

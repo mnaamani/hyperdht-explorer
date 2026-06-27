@@ -1,7 +1,7 @@
 import process from 'bare-process'
 import fs from 'bare-fs'
-import { openDb, prefixOf, hostKind } from '../db.js'
-import { htmlPath, ensureDirs } from '../paths.js'
+import { openDb, prefixOf, hostKind } from '../db.mjs'
+import { htmlPath, ensureDirs } from '../paths.mjs'
 
 // Render the discovered + geo-located nodes onto an interactive world map.
 // Produces a self-contained map.html (Leaflet from CDN, data embedded inline),
@@ -72,7 +72,7 @@ export function run(ctx) {
   const totalNodes = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n
   const located = points.reduce((s, p) => s + p.nodes, 0)
 
-  // observed participants (observe.js) grouped by /24
+  // observed participants (observe.mjs) grouped by /24
   const obs = new Map()
   for (const o of db.prepare('SELECT host, app, public_key FROM observations').all()) {
     const g = geo.get(prefixOf(o.host))
@@ -204,7 +204,7 @@ export function run(ctx) {
     map.addLayer(cluster);
     map.addLayer(seederLayer);
 
-    // observed participants (observe.js) — orange diamonds, own toggleable layer
+    // observed participants (observe.mjs) — orange diamonds, own toggleable layer
     const observedLayer = L.layerGroup();
     let observedPeers = 0;
     for (const o of OBSERVED) {

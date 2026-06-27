@@ -2,7 +2,7 @@ import DHT from 'hyperdht'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import process from 'bare-process'
-import { openDb, prefixOf, isPrivateIp } from '../db.js'
+import { openDb, prefixOf, isPrivateIp } from '../db.mjs'
 
 // ---------------------------------------------------------------------------
 // hyperdht-explorer: random-walk crawler for the hyperdht (Kademlia) node network.
@@ -226,7 +226,7 @@ export async function run(ctx) {
     }
   }
 
-  // Record one metrics snapshot for the time-series view (timeline.js).
+  // Record one metrics snapshot for the time-series view (timeline.mjs).
   function writeSnapshot() {
     const total = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n
     const alive = db.prepare('SELECT COUNT(*) AS n FROM nodes WHERE alive = 1').get().n

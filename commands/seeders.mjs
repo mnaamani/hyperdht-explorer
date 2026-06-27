@@ -3,7 +3,7 @@ import b4a from 'b4a'
 import crypto from 'hypercore-crypto'
 import idEnc from 'hypercore-id-encoding'
 import process from 'bare-process'
-import { openDb } from '../db.js'
+import { openDb } from '../db.mjs'
 
 // Find peers seeding a specific Pear application (or any Hypercore), given its
 // pear:// link or public key. This works because app distribution is public by

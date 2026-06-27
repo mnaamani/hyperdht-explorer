@@ -155,7 +155,7 @@ it ships a cron-ready `ops/scheduled-scan.sh` wrapper.
 
 ## How it works
 
-### Crawling (`commands/scan.js`)
+### Crawling (`commands/scan.mjs`)
 
 hyperdht's `HyperDHT` extends `dht-rpc`, so the lower-level Kademlia primitives
 (`findNode`, `query`, `ping`, `toArray`) are available directly on the DHT
@@ -207,7 +207,7 @@ table. The `geo` cache is **not** pruned — it's keyed by `/24` and reused if a
 network reappears, saving an ip-api lookup. Tagged seeders (`app_seeder`) follow
 the same 72h rule as any other node.
 
-### Geo-location (`commands/geo.js`)
+### Geo-location (`commands/geo.mjs`)
 
 Resolves IPs to lat/lon/city/ISP using **ip-api.com**'s batch endpoint. To
 respect rate limits it:
@@ -217,14 +217,14 @@ respect rate limits it:
 - skips any `/24` already cached, so each address is queried at most once;
 - batches 100 lookups per request and honours the `X-Rl` / `X-Ttl` headers.
 
-### Probing (`commands/probe.js`)
+### Probing (`commands/probe.mjs`)
 
 The only "interrogation" the DHT protocol permits is `PING` — DHT nodes expose
 nothing about what software they run or what they seed (by design). Probing
 records `alive`, `rtt_ms`, and `last_ping`, which sharpens the stability signal:
 a node seen across many sessions _and_ still answering is clearly dedicated.
 
-### Seeders (`commands/seeders.js`)
+### Seeders (`commands/seeders.mjs`)
 
 Pear apps are distributed over the same DHT: every install replicates the app's
 update feed, announcing under its **discovery key**. Given a `pear://` link (or
@@ -240,7 +240,7 @@ This finds seeders of the **application feed** — effectively a census of onlin
 announcing installs — **not** private chat rooms, which are keyed by per-room
 invite keys and are not discoverable.
 
-### Map (`commands/map.js`)
+### Map (`commands/map.mjs`)
 
 Generates a self-contained `map.html` (Leaflet + markercluster from CDN, data
 embedded inline). Networks are grouped by `/24`, one marker each:
@@ -250,14 +250,14 @@ embedded inline). Networks are grouped by `/24`, one marker each:
   grey = probed but unreachable
 - **magenta ring** marks app seeders; a layer toggle filters to seeders only
 
-### Ring (`commands/ring.js`)
+### Ring (`commands/ring.mjs`)
 
 A self-contained SVG that projects each node onto a circle by the high bits of its
 id (dot size = sightings, colour = sessions, magenta = seeders). Shows keyspace
 coverage and popularity. Note: Kademlia uses an XOR metric and is really a binary
 trie — the circle is a projection, so ring adjacency ≠ routing distance.
 
-### Topology (`commands/topo.js`)
+### Topology (`commands/topo.mjs`)
 
 Renders the **underlay** view (`topology.html`): not DHT overlay links (any node
 can talk to any node), but how the ASNs hosting the nodes interconnect in the
@@ -289,7 +289,7 @@ RIPEstat rate-limit compliance is built in: every request carries
 concurrent/IP) and spaced, one covering prefix is reused across all the /24s it
 contains, and results are cached (refetched weekly, or with `--refresh`).
 
-### Storage probe (`commands/storeprobe.js`)
+### Storage probe (`commands/storeprobe.mjs`)
 
 Uses hyperdht's BEP44-style put/get primitives to measure the **DHT's storage
 reliability** — a
@@ -355,7 +355,7 @@ shifts_ over time is what the storage view tracks.
 All time-series views sharpen as the observed span grows, so they're most
 meaningful after the scheduled scans have been running for a few days.
 
-### Timeline (`commands/timeline.js`)
+### Timeline (`commands/timeline.mjs`)
 
 Shows how the population evolves over time: discovery & churn (new vs departed
 nodes/hour, cumulative set), approximate concurrent presence, a survival/retention
@@ -369,9 +369,9 @@ crawler appends to at the end of every run, so it fills in as you scan more.
 | File                          | Role                                                                                  |
 | ----------------------------- | ------------------------------------------------------------------------------------- |
 | `bin.mjs`                     | CLI entry — parses flags, resolves the data dir, dispatches subcommands               |
-| `commands/*.js`               | one file per subcommand (`scan`, `geo`, `probe`, `map`, …), each exporting `run(ctx)` |
-| `db.js`                       | shared SQLite schema + helpers (`prefixOf`, `parseAs`, `hostKind`, …)                 |
-| `paths.js`                    | resolves the OS app-data dir + DB / HTML paths                                        |
+| `commands/*.mjs`              | one file per subcommand (`scan`, `geo`, `probe`, `map`, …), each exporting `run(ctx)` |
+| `db.mjs`                      | shared SQLite schema + helpers (`prefixOf`, `parseAs`, `hostKind`, …)                 |
+| `paths.mjs`                   | resolves the OS app-data dir + DB / HTML paths                                        |
 | `app.cjs`, `workers/main.cjs` | pear-runtime OTA self-updater (optional, `--updates`)                                 |
 | `scripts/make.js`             | picks the `bare-build` target for the host platform                                   |
 | `<app-data>/nodes.db`         | SQLite database (generated, outside the repo)                                         |

@@ -1,6 +1,6 @@
 import process from 'bare-process'
 import fetch from 'bare-fetch'
-import { openDb, prefixOf } from '../db.js'
+import { openDb, prefixOf } from '../db.mjs'
 
 // Enrich discovered nodes with geo-location via ip-api.com's batch endpoint.
 //

@@ -1,7 +1,7 @@
 import process from 'bare-process'
 import fs from 'bare-fs'
-import { openDb } from '../db.js'
-import { htmlPath, ensureDirs } from '../paths.js'
+import { openDb } from '../db.mjs'
+import { htmlPath, ensureDirs } from '../paths.mjs'
 
 // Render the discovered nodes onto a circular projection of the 256-bit Kademlia
 // ID space ("the ring"). Each node is placed by the high bits of its id; dot size

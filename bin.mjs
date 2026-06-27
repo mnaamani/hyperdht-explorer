@@ -3,32 +3,32 @@ import os from 'bare-os'
 import path from 'bare-path'
 import process from 'bare-process'
 import pkg from './package.json'
-import { dataDir } from './paths.js'
+import { dataDir } from './paths.mjs'
 import App from './app.cjs'
 
 // hyperdht-explorer CLI entrypoint — a pear-runtime standalone Bare app.
 //
 //   bare bin.mjs <command> [options]
 //
-// Each subcommand lives in commands/<name>.js and exports `async run(ctx)`.
+// Each subcommand lives in commands/<name>.mjs and exports `async run(ctx)`.
 // We resolve the on-disk data dir ONCE here (so the DB, generated HTML, and the
 // updater store all share one app-data root), then dispatch. The pear-runtime OTA
 // self-updater is an optional background subsystem, off by default — enable with
 // `--updates` once a real `upgrade` pear:// link is set in package.json.
 
 const COMMANDS = {
-  scan: () => import('./commands/scan.js'),
-  geo: () => import('./commands/geo.js'),
-  probe: () => import('./commands/probe.js'),
-  seeders: () => import('./commands/seeders.js'),
-  observe: () => import('./commands/observe.js'),
-  map: () => import('./commands/map.js'),
-  ring: () => import('./commands/ring.js'),
-  timeline: () => import('./commands/timeline.js'),
-  summary: () => import('./commands/summary.js'),
-  topo: () => import('./commands/topo.js'),
-  rpki: () => import('./commands/rpki.js'),
-  storeprobe: () => import('./commands/storeprobe.js')
+  scan: () => import('./commands/scan.mjs'),
+  geo: () => import('./commands/geo.mjs'),
+  probe: () => import('./commands/probe.mjs'),
+  seeders: () => import('./commands/seeders.mjs'),
+  observe: () => import('./commands/observe.mjs'),
+  map: () => import('./commands/map.mjs'),
+  ring: () => import('./commands/ring.mjs'),
+  timeline: () => import('./commands/timeline.mjs'),
+  summary: () => import('./commands/summary.mjs'),
+  topo: () => import('./commands/topo.mjs'),
+  rpki: () => import('./commands/rpki.mjs'),
+  storeprobe: () => import('./commands/storeprobe.mjs')
 }
 
 const HELP = `hyperdht-explorer v${pkg.version} — hyperdht network-health explorer
@@ -80,7 +80,7 @@ if (!COMMANDS[cmdName]) {
   Bare.exit(1)
 }
 
-// Resolve the data dir once and expose it to commands (paths.js reads this env).
+// Resolve the data dir once and expose it to commands (paths.mjs reads this env).
 const dir = storage || dataDir()
 process.env.HYPERDHT_EXPLORER_HOME = dir
 

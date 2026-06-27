@@ -1,8 +1,8 @@
 import process from 'bare-process'
 import fs from 'bare-fs'
 import fetch from 'bare-fetch'
-import { openDb, prefixOf, parseAs, cleanName } from '../db.js'
-import { htmlPath, ensureDirs } from '../paths.js'
+import { openDb, prefixOf, parseAs, cleanName } from '../db.mjs'
+import { htmlPath, ensureDirs } from '../paths.mjs'
 
 // AS-level BGP topology of the networks hosting DHT nodes -> topology.html.
 //

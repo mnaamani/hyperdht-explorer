@@ -3,8 +3,8 @@ import fs from 'bare-fs'
 import path from 'bare-path'
 import os from 'bare-os'
 import process from 'bare-process'
-import { prefixOf, isPrivateIp, parseAs, cleanName, hostKind, openDb } from '../db.js'
-import { dataDir, dbPath, htmlPath } from '../paths.js'
+import { prefixOf, isPrivateIp, parseAs, cleanName, hostKind, openDb } from '../db.mjs'
+import { dataDir, dbPath, htmlPath } from '../paths.mjs'
 
 // Pure, network-free smoke tests for the shared helpers, path resolution, and the
 // SQLite schema. We point HYPERDHT_EXPLORER_HOME at a temp dir so openDb()/ensureDirs()

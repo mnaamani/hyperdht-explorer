@@ -13,11 +13,14 @@ with `bare bin.mjs <command> [args]` (or its `npm run <command>` alias).
   (`bare-process`, `bare-sqlite`, `bare-fs`, `bare-fetch`) are Bare-native.
 - To inspect a Bare module's source, **Read** the file — don't execute it under
   Node.
-- `package.json` has `"type": "module"`; all `.js`/`.mjs` files are ESM. The OTA
-  updater files (`app.cjs`, `workers/main.cjs`) are deliberately **CJS** (`.cjs`)
-  because pear-runtime's worker uses `require`. Bare infers module type from the
-  extension + nearest `package.json`, so scratch test files must live in this
-  directory (not `/tmp`) to be treated as modules.
+- Module type is by **file extension** (no `"type"` in `package.json`, matching the
+  hello-pear-bare boilerplate): ESM source is `.mjs` (`bin.mjs`, `db.mjs`,
+  `paths.mjs`, every `commands/*.mjs`), the OTA updater files (`app.cjs`,
+  `workers/main.cjs`) are **CJS** `.cjs` because pear-runtime's worker uses
+  `require`, and plain `.js` (e.g. `scripts/make.js`) is CJS — run under Node, not
+  Bare. Bare infers module type from the extension + nearest `package.json`, so a
+  scratch ESM test file must be named `.mjs` (and live in this directory, not
+  `/tmp`).
 - `Date.now()`, timers (`globalThis.setTimeout`), and `b4a` work normally in the
   app. `bin.mjs` reads `Bare.argv` and owns process exit (`Bare.exit`); commands
   receive a synthetic `ctx.argv` (= `[arg0, cmdName, ...rest]`, so their existing
@@ -36,11 +39,11 @@ with `bare bin.mjs <command> [args]` (or its `npm run <command>` alias).
 `bin.mjs` is the CLI entry: it strips global flags (`--storage <dir>`,
 `--updates`/`--no-updates`), resolves the data dir once, optionally boots the OTA
 updater (`app.cjs` → `workers/main.cjs`, best-effort, off by default), then
-dynamically imports `commands/<name>.js` and awaits its exported `run(ctx)`. Each
+dynamically imports `commands/<name>.mjs` and awaits its exported `run(ctx)`. Each
 command is otherwise a small single-purpose unit sharing one SQLite database.
-`db.js` is the only place the schema lives.
+`db.mjs` is the only place the schema lives.
 
-**Storage lives OUTSIDE the repo.** `paths.js` resolves a per-user OS app-data dir
+**Storage lives OUTSIDE the repo.** `paths.mjs` resolves a per-user OS app-data dir
 (`dataDir()`): macOS `~/Library/Application Support/hyperdht-explorer`, Linux
 `$XDG_DATA_HOME/.../hyperdht-explorer`, Windows `%APPDATA%/hyperdht-explorer` — overridable
 via `HYPERDHT_EXPLORER_HOME` or `--storage`. It holds `nodes.db`, `public/*.html`, and
@@ -54,53 +57,53 @@ write outputs into the repo cwd.
 off. Native-addon (`bare-sqlite`/`bare-fetch`) bundling in standalone builds is the
 one thing to verify when first cutting a binary.
 
-- `commands/scan.js` (`scan`) — random-walk crawler. `HyperDHT extends dht-rpc`, so
+- `commands/scan.mjs` (`scan`) — random-walk crawler. `HyperDHT extends dht-rpc`, so
   `findNode`/`query`/`ping`/`toArray` are on the `dht` instance directly.
-- `commands/geo.js` (`geo`) — ip-api.com batch geo lookup, one query per `/24`.
-- `commands/probe.js` (`probe`) — `dht.ping` for liveness + RTT.
-- `commands/seeders.js` (`seeders`) — `pear://`/key → discovery key → `dht.lookup` →
+- `commands/geo.mjs` (`geo`) — ip-api.com batch geo lookup, one query per `/24`.
+- `commands/probe.mjs` (`probe`) — `dht.ping` for liveness + RTT.
+- `commands/seeders.mjs` (`seeders`) — `pear://`/key → discovery key → `dht.lookup` →
   tag announcer relay endpoints in `app_seeder`.
-- `commands/map.js` (`map`) — emits self-contained `map.html` (Leaflet, data inlined).
-- `commands/ring.js` (`ring`) — emits `ring.html`, an offline inline-SVG circular
+- `commands/map.mjs` (`map`) — emits self-contained `map.html` (Leaflet, data inlined).
+- `commands/ring.mjs` (`ring`) — emits `ring.html`, an offline inline-SVG circular
   projection of the keyspace (no CDN).
-- `commands/timeline.js` (`timeline`) — emits `timeline.html` (Chart.js via CDN). Views 1/2/4
+- `commands/timeline.mjs` (`timeline`) — emits `timeline.html` (Chart.js via CDN). Views 1/2/4
   are derived from `first_seen`/`last_seen`; the snapshot view reads `snapshots`;
   the storage-health view reads `store_probes`. The crawler writes one `snapshots`
   row per run in `writeSnapshot()` (crawl mode only, gated by `snapshotOnExit`).
-- `commands/storeprobe.js` (`storeprobe`) — puts canary records and re-polls the closest
+- `commands/storeprobe.mjs` (`storeprobe`) — puts canary records and re-polls the closest
   nodes (direct `dht.request` with `COMMANDS.IMMUTABLE_GET` from
   `hyperdht/lib/constants.js`) at checkpoints spanning hyperdht's **~20-min record
   TTL** (`defaultMaxAge`) → a decay curve in `store_probes`. A run is ≈22 min, so it
   is scheduled separately (`ops/scheduled-storeprobe.sh`), NOT in the 15-min scan cycle.
-- `commands/summary.js` (`summary`) — emits `summary.html`, sortable tables by ASN/operator
+- `commands/summary.mjs` (`summary`) — emits `summary.html`, sortable tables by ASN/operator
   and /24 (no CDN; server-rendered rows + vanilla sort/filter JS).
-- `commands/topo.js` (`topo`) — emits `topology.html`, a D3 (CDN) force graph of the BGP/AS
+- `commands/topo.mjs` (`topo`) — emits `topology.html`, a D3 (CDN) force graph of the BGP/AS
   interconnection. Fetches AS adjacencies + holder names from **RIPEstat**
   (`stat.ripe.net/data/asn-neighbours` and `as-overview`) via `bare-fetch`, cached
   in `as_neighbours` / `as_names` (refetch weekly or `--refresh`). It's the underlay
   (BGP), NOT DHT overlay links — keep that distinction in any copy.
-- `parseAs(as_info, org, isp)` lives in `db.js` (shared by summary + topo); splits
-  ip-api's `"AS#### Name"` into `{asn, asnNum, name}`. `cleanName()` (also in db.js)
+- `parseAs(as_info, org, isp)` lives in `db.mjs` (shared by summary + topo); splits
+  ip-api's `"AS#### Name"` into `{asn, asnNum, name}`. `cleanName()` (also in db.mjs)
   strips registry-noise quotes from operator names.
-- `commands/rpki.js` (`rpki`) — RIPEstat RPKI route-origin validity per /24 → `rpki` table.
+- `commands/rpki.mjs` (`rpki`) — RIPEstat RPKI route-origin validity per /24 → `rpki` table.
   `network-info(IP)` → covering prefix + origin ASN, then `rpki-validation` →
-  valid/invalid/unknown. `commands/topo.js` aggregates this per ASN for a "colour by RPKI"
+  valid/invalid/unknown. `commands/topo.mjs` aggregates this per ASN for a "colour by RPKI"
   toggle on the topology page.
-- **RIPEstat rate limits** (used by `commands/topo.js` + `commands/rpki.js`): always add
+- **RIPEstat rate limits** (used by `commands/topo.mjs` + `commands/rpki.mjs`): always add
   `sourceapp=hyperdht-explorer`; max 8 concurrent/IP (we go sequential + spaced); cache
   and refetch weekly; reuse one covering prefix across the /24s it contains.
-- `commands/observe.js` (`observe`) — seed-and-listen: announces an ephemeral keypair under a
+- `commands/observe.mjs` (`observe`) — seed-and-listen: announces an ephemeral keypair under a
   public topic's discovery key, records connecting peers (incl. NAT'd) into the
   `observations` table via `conn.rawStream.remoteHost/remotePort`. Self-timed
   (`--minutes`); HEALTH-ONLY (aggregate, public topics, never deanonymize — see the
   `project-intent-health-not-deanon` memory). `ops/scheduled-observe.sh` runs it on a
   separate cron schedule (env: OBSERVE_LINK/OBSERVE_APP/OBSERVE_MINUTES).
-- `hostKind(geoRow)` (db.js) classifies a network datacenter/mobile/proxy/residential
-  from ip-api's `hosting`/`mobile`/`proxy` flags (geo.js fetches them; backfills older
+- `hostKind(geoRow)` (db.mjs) classifies a network datacenter/mobile/proxy/residential
+  from ip-api's `hosting`/`mobile`/`proxy` flags (geo.mjs fetches them; backfills older
   rows; `--refresh` forces all). Surfaced as the summary "Type" column + map colours.
 - Distributed/federated explorer is deferred — see `PROPOSAL-federation.md`.
 
-### `nodes.db` schema (see `db.js`)
+### `nodes.db` schema (see `db.mjs`)
 
 - `nodes` — PK `(host, port)`. Tracking: `first_seen`, `last_seen`,
   `seen_count`, `sessions`. Probe: `alive`, `rtt_ms`, `last_ping`. Seeders:
@@ -116,10 +119,10 @@ one thing to verify when first cutting a binary.
 - `rpki` — PK `prefix24`. RIPEstat RPKI validity: `covering`, `origin_asn`,
   `status` (valid/invalid/unknown/unannounced), `fetched_at`.
 - `observations` — PK `(public_key, host, port)`. Peers seen connecting via
-  `commands/observe.js`: `app`, `first_seen`, `last_seen`, `count`. `snapshots.observed` =
+  `commands/observe.mjs`: `app`, `first_seen`, `last_seen`, `count`. `snapshots.observed` =
   `COUNT(DISTINCT public_key)`, trended on the timeline.
 
-Schema changes go in `db.js`: add the column to `CREATE TABLE` **and** add a
+Schema changes go in `db.mjs`: add the column to `CREATE TABLE` **and** add a
 `PRAGMA table_info`-guarded `ALTER TABLE` for existing databases. `nodes.db`
 persists between runs, so always migrate rather than assuming a fresh DB.
 
@@ -132,7 +135,7 @@ persists between runs, so always migrate rather than assuming a fresh DB.
   but you cannot list announced services from random keys. Lookups require a
   known 32-byte target. Don't add features that assume otherwise.
 - DHT node `id` is `hash(ip:port)` for ordinary nodes — **not** a connectable
-  public key. Only announcer `publicKey`s (from `commands/seeders.js`) are connectable.
+  public key. Only announcer `publicKey`s (from `commands/seeders.mjs`) are connectable.
 - The full node RPC vocabulary (PING, FIND_NODE, LOOKUP, ANNOUNCE, MUTABLE/
   IMMUTABLE GET/PUT, PEER_HANDSHAKE…) has **no** "what are you running/seeding"
   command. Probing is limited to liveness.
@@ -153,10 +156,10 @@ cycle exit cleanly and write its snapshot.
 ## Conventions
 
 - Keep each script standalone and runnable via its `npm run` alias; share only
-  through `db.js`.
+  through `db.mjs`.
 - ip-api.com is HTTP-only on the free tier and rate-limited — preserve the
-  `/24` dedupe + header backoff in `commands/geo.js`.
-- `commands/map.js` pulls Leaflet from a CDN; the map needs internet to render tiles.
+  `/24` dedupe + header backoff in `commands/geo.mjs`.
+- `commands/map.mjs` pulls Leaflet from a CDN; the map needs internet to render tiles.
 - Be honest in output about limitations (relay vs. client addresses, wall-clock
   RTT including local latency, seeders ≠ all installs). Existing code says so;
   keep that tone.

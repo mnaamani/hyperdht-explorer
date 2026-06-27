@@ -1,7 +1,7 @@
 import process from 'bare-process'
 import fs from 'bare-fs'
-import { openDb, prefixOf } from '../db.js'
-import { htmlPath, ensureDirs } from '../paths.js'
+import { openDb, prefixOf } from '../db.mjs'
+import { htmlPath, ensureDirs } from '../paths.mjs'
 
 // Render how the DHT network evolves over time -> timeline.html.
 // Four views:
@@ -103,7 +103,7 @@ export function run(ctx) {
     observed: snapshots.map((s) => s.observed)
   }
 
-  // --- storage-health series (storeprobe.js) ----------------------------------
+  // --- storage-health series (storeprobe.mjs) ----------------------------------
   const store = {
     labels: storeProbes.map((s) => fmt(s.ts)),
     putPct: storeProbes.map((s) => (s.canaries ? Math.round((s.put_ok / s.canaries) * 100) : 0)),
