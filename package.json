@@ -1,0 +1,40 @@
+{
+  "name": "dht-explorer",
+  "version": "1.0.0",
+  "description": "Random-walk crawler that discovers hyperdht network nodes",
+  "main": "index.js",
+  "scripts": {
+    "scan": "npx bare index.js",
+    "geo": "npx bare geo.js",
+    "probe": "npx bare probe.js",
+    "seeders": "npx bare seeders.js",
+    "observe": "npx bare observe.js",
+    "map": "npx bare map.js",
+    "ring": "npx bare ring.js",
+    "timeline": "npx bare timeline.js",
+    "summary": "npx bare summary.js",
+    "topo": "npx bare topo.js",
+    "rpki": "npx bare rpki.js",
+    "store": "npx bare store.js",
+    "storeprobe": "npx bare storeprobe.js",
+    "format": "prettier --write \"*.js\"",
+    "format:check": "prettier --check \"*.js\"",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "b4a": "^1.8.1",
+    "bare-fetch": "^3.0.1",
+    "bare-fs": "^4.7.2",
+    "bare-process": "^4.5.0",
+    "bare-sqlite": "^0.1.4",
+    "hyperdht": "^6.32.0",
+    "sodium-universal": "^5.0.1"
+  },
+  "devDependencies": {
+    "prettier": "^3.8.5"
+  }
+}
