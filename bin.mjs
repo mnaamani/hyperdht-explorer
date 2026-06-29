@@ -116,14 +116,16 @@ if (updates) {
 }
 
 // --- graceful shutdown on signals ---------------------------------------------
-// `Bare` is itself a bare EventEmitter; the runtime does NOT install OS signal
-// watchers, so `Bare.on('SIG…')` only fires when something forwards the signal as
-// a Bare event. The standalone build / pear bootstrap can do that forwarding; a
-// plain `bare bin.mjs` dev run generally does not (use --for/--queries there). See
-// the signal note in CLAUDE.md. Best-effort path: ask the running command to wind
-// down (commands register a callback via ctx.onShutdown — e.g. scan prints its
-// summary + writes a snapshot), tear down the updater, then exit with the
-// conventional 128+signal code.
+// Use bare-process `process.on(...)` (backed by bare-signals' uv_signal handles) —
+// NOT `Bare.on('SIG…')`, which never fires because Bare core doesn't emit signal
+// events (verified across platforms). `process.on` receives external SIGINT/SIGTERM
+// on Linux, so cron / `timeout` / Ctrl-C all drive this path there. macOS currently
+// drops EXTERNAL signals (a darwin-only bare bug: a started handle catches
+// self-raised signals but not process-directed ones), so --for/--queries stay the
+// cross-platform fallback. See the signal note in CLAUDE.md. On a signal: ask the
+// running command to wind down (commands register a callback via ctx.onShutdown —
+// e.g. scan prints its summary + writes a snapshot), tear down the updater, then
+// exit with the conventional 128+signal code.
 const shutdownHooks = []
 let signalled = 0
 async function onSignal(code) {
@@ -139,10 +141,10 @@ async function onSignal(code) {
   }
   Bare.exit(code)
 }
-Bare.on('SIGHUP', () => onSignal(129))
-Bare.on('SIGINT', () => onSignal(130))
-Bare.on('SIGQUIT', () => onSignal(131))
-Bare.on('SIGTERM', () => onSignal(143))
+process.on('SIGHUP', () => onSignal(129))
+process.on('SIGINT', () => onSignal(130))
+process.on('SIGQUIT', () => onSignal(131))
+process.on('SIGTERM', () => onSignal(143))
 
 // --- dispatch -----------------------------------------------------------------
 let code = 0

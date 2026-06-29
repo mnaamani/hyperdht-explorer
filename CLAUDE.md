@@ -26,29 +26,31 @@ with `bare bin.mjs <command> [args]` (or its `npm run <command>` alias).
   receive a synthetic `ctx.argv` (= `[arg0, cmdName, ...rest]`, so their existing
   `argv[2..]` parsing is unchanged) and must **return** instead of calling
   `process.exit` — exiting from inside a command would skip the updater teardown.
-- **Signals don't reach JS on this toolchain — and it's the latest** (bare-runtime
-  1.29.5, bare-build 1.0.2, bare-signals 4.2.0, bare-process 4.5.0, all current as of
-  2026-06; a fresh hello-pear-bare clone gets the same, so it isn't version skew).
-  Empirically verified across every API — `Bare.on('SIG…')` (the hello-pear-bare
-  approach), `process.on('SIGINT'/'SIGTERM')` (bare-process, what `graceful-goodbye`
-  uses), and `new Signal('SIG…').start()` (bare-signals, refs stored so no GC) — in
-  **both** dev (`bare bin.mjs`) and a **standalone** bare-build binary, with and
-  without the pear-runtime worker (it's a `bare-thread`, doesn't change the parent's
-  signal disposition). With no worker, signals hit the OS default disposition
-  (SIGTERM→143, SIGINT→130); with the worker running, **SIGINT is swallowed** (the
-  process neither dies nor calls back — Ctrl-C hangs `--updates` runs). Net: no JS
-  callback ever fires. (Even hello-pear-bare itself: build it standalone, run it in a
-  terminal, press Ctrl-C — it exits **0**, a clean loop-drain. Its
-  `Bare.on('SIGINT', () => app.exit(130))` would force exit 130 if it ran, so exit 0
-  proves the handler didn't fire there either; "it exited on Ctrl-C" is the idle loop
-  draining, not the handler.) So `timeout bare …` hard-kills and skips cleanup.
-  `bin.mjs`
-  still registers best-effort `Bare.on('SIGHUP'/'SIGINT'/'SIGQUIT'/'SIGTERM')`
-  handlers driving a graceful shutdown (`ctx.onShutdown` hooks → e.g. `scan`'s
-  summary + snapshot → close updater → exit 128+sig) — harmless and forward-
-  compatible, but **inert here**. For a guaranteed clean stop use in-code limits:
-  `scan` supports `--for <seconds>` and `--queries <n>`, which resolve the command's
-  `run()` promise themselves. Don't _rely_ on signal handlers.
+- **Signals: use `process.on` (bare-process), not `Bare.on`; works on Linux, not
+  macOS.** Two distinct facts, both empirically verified (bare-runtime 1.29.5,
+  bare-build 1.0.2, bare-signals 4.2.0, bare-process 4.5.0 — all latest as of 2026-06):
+  1. **`Bare.on('SIG…')` is not a signal API** — Bare core emits no signal events, so
+     those handlers never fire on _any_ platform (confirmed on Linux, where the real
+     APIs _do_ fire, `Bare.on` still didn't). hello-pear-bare's `Bare.on('SIGINT', …)`
+     is effectively dead code; its "exits 0 on Ctrl-C" is bare's clean loop-drain, not
+     the handler (a fired handler would force exit 130). The real APIs are
+     `process.on('SIG…')` (bare-process, what `graceful-goodbye` uses) and
+     `new Signal('SIG…').start()` (bare-signals); bare-process just forwards bare-signals.
+  2. **macOS drops _external_ signal delivery** (a darwin-only bare bug). With the real
+     API: on **Linux**, an external `kill`/`timeout`/Ctrl-C SIGINT/SIGTERM reaches the
+     handler (exit 0 via callback); on **macOS standalone**, the same binary lets
+     external signals fall through to the OS default disposition (SIGTERM→143,
+     SIGINT→130) — yet a _self_-raised `kill(getpid())` _does_ fire the handler. Repro +
+     details in `bug.md`. (Watch the dev confound: the PATH `bare` is a Node wrapper
+     that forks the real runtime, so `kill $!` hits the wrapper, not bare; interactive
+     Ctrl-C works because the TTY signals the whole process group.)
+     `bin.mjs` registers `process.on('SIGHUP'/'SIGINT'/'SIGQUIT'/'SIGTERM')` handlers that
+     drive a graceful shutdown (`ctx.onShutdown` hooks → e.g. `scan`'s summary + snapshot →
+     close updater → exit 128+sig). These are **real on Linux** (so a cron/daemon/`timeout`
+     run shuts down cleanly there) but **inert on macOS** until the bare bug is fixed. So
+     for a guaranteed cross-platform clean stop, still prefer in-code limits: `scan`
+     supports `--for <seconds>` and `--queries <n>`, which resolve the command's `run()`
+     promise themselves. Don't _rely_ on signal handlers on macOS.
 
 ## Architecture
 
@@ -124,7 +126,8 @@ one thing to verify when first cutting a binary.
 - `hostKind(geoRow)` (db.mjs) classifies a network datacenter/mobile/proxy/residential
   from ip-api's `hosting`/`mobile`/`proxy` flags (geo.mjs fetches them; backfills older
   rows; `--refresh` forces all). Surfaced as the summary "Type" column + map colours.
-- Distributed/federated explorer is deferred — see `PROPOSAL-federation.md`.
+- Long-running daemon (worker-backed), benevolent seeding of public app feeds, and a
+  federated explorer are all deferred — see `PROPOSAL-federation.md`.
 
 ### `nodes.db` schema (see `db.mjs`)
 
