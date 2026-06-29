@@ -153,6 +153,25 @@ export function openDb(path = dbPath()) {
   return db
 }
 
+// Well-known PUBLIC Pear apps, referenceable by name (instead of a full pear://
+// link) in `seeders` and `observe`. Only add a preset once its public pear://
+// link is VERIFIED — never guess a key. The name doubles as the default app tag.
+export const APP_PRESETS = {
+  // Keet (keet.io) — also used by ops/scheduled-observe.sh + README.
+  keet: 'pear://17pwkcszz18deaccarhrrixhzf1f5ko1b1dz6j3pxhexebutjwzy',
+  // PearPass — password manager Pear app.
+  pearpass: 'pear://dbkezmhetxwo95ab1kcojfraw1eryzf7kex5cahykf6b9c3amd6o'
+}
+
+// Resolve a positional arg to { link, name }: a bare preset name (e.g. 'keet')
+// expands to its link and offers the preset name as the default tag; anything
+// else (a pear:// link or raw key) passes through with no default tag.
+export function resolvePreset(arg) {
+  const preset = arg && APP_PRESETS[arg.toLowerCase()]
+  if (preset) return { link: preset, name: arg.toLowerCase() }
+  return { link: arg, name: null }
+}
+
 // True for private / reserved / non-routable IPv4 (RFC1918, loopback, link-local,
 // CGNAT, multicast, reserved). Non-IPv4 strings are treated as not-private.
 export function isPrivateIp(host) {

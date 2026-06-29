@@ -41,8 +41,8 @@ commands:
   scan         random-walk crawl the DHT        (--for N | --queries N | --prune-hours N | <topic-hex>)
   geo          ip-api geo-enrich discovered /24s (--refresh)
   probe        DHT ping nodes for liveness + RTT
-  seeders      tag an app's relay endpoints     <pear://link | key> [app-name]
-  observe      seed-and-listen for participants  <pear://link | key> [app-name] [--minutes N]
+  seeders      tag an app's relay endpoints     <pear://link | key | keet | pearpass> [app-name]
+  observe      seed-and-listen for participants  <pear://link | key | keet | pearpass> [app-name] [--minutes N]
   map          render map.html (Leaflet world map)
   ring         render ring.html (keyspace projection)
   timeline     render timeline.html (time series)

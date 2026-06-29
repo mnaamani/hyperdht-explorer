@@ -3,7 +3,7 @@ import b4a from 'b4a'
 import crypto from 'hypercore-crypto'
 import idEnc from 'hypercore-id-encoding'
 import process from 'bare-process'
-import { openDb } from '../db.mjs'
+import { openDb, APP_PRESETS, resolvePreset } from '../db.mjs'
 
 // Find peers seeding a specific Pear application (or any Hypercore), given its
 // pear:// link or public key. This works because app distribution is public by
@@ -20,13 +20,21 @@ import { openDb } from '../db.mjs'
 // NOTE: this finds seeders of the APPLICATION feed (a census of online installs)
 // — NOT private chat rooms, which are keyed by per-room invite keys and are not
 // enumerable from the DHT.
+//
+// Well-known public Pear apps can be referenced by name instead of a key, e.g.
+//   bare bin.mjs seeders keet
+// The name also becomes the default app_seeder tag. Presets live in db.mjs
+// (APP_PRESETS) so `observe` shares them; only add one with a verified link.
 
 export async function run(ctx) {
   const argv = ctx.argv
-  const arg = argv[2]
-  const appName = argv[3] || 'app'
+  // A bare preset name (e.g. `seeders keet`) expands to its link and supplies the
+  // default tag; a pear:// link or raw key passes through unchanged.
+  const { link: arg, name: presetName } = resolvePreset(argv[2])
+  const appName = argv[3] || presetName || 'app'
   if (!arg) {
-    console.error('usage: bare bin.mjs seeders <pear://link | hypercore-key> [app-name]')
+    console.error('usage: bare bin.mjs seeders <pear://link | hypercore-key | preset> [app-name]')
+    console.error(`presets: ${Object.keys(APP_PRESETS).join(', ')}`)
     process.exit(1)
   }
 

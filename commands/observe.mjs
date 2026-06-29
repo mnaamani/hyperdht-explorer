@@ -3,14 +3,17 @@ import b4a from 'b4a'
 import crypto from 'hypercore-crypto'
 import idEnc from 'hypercore-id-encoding'
 import process from 'bare-process'
-import { openDb, prefixOf, hostKind, isPrivateIp } from '../db.mjs'
+import { openDb, prefixOf, hostKind, isPrivateIp, APP_PRESETS, resolvePreset } from '../db.mjs'
 
 // Seed-and-listen: announce ourselves under a PUBLIC topic (e.g. a Pear app's
 // update feed) and record the peers that connect to us. This surfaces real,
 // often NAT'd/ephemeral participants that a findNode crawl can never see —
 // because we observe who *connects*, not who is merely in the routing table.
 //
-//   bare bin.mjs observe <pear://link | hypercore-key> [app-name] [--minutes N]
+//   bare bin.mjs observe <pear://link | hypercore-key | preset> [app-name] [--minutes N]
+//
+// A bare preset name (e.g. `observe keet`, see APP_PRESETS in db.mjs) expands to
+// its link and supplies the default app tag.
 //
 // HEALTH MONITORING ONLY. We record aggregate participation (addresses, counts,
 // residential-vs-datacenter mix) to gauge network health — never to track or
@@ -20,15 +23,16 @@ import { openDb, prefixOf, hostKind, isPrivateIp } from '../db.mjs'
 export async function run(ctx) {
   const argv = ctx.argv
   const positional = argv.slice(2).filter((a) => !a.startsWith('--'))
-  const arg = positional[0]
-  const appName = positional[1] || 'observed'
+  const { link: arg, name: presetName } = resolvePreset(positional[0])
+  const appName = positional[1] || presetName || 'observed'
   const mi = argv.indexOf('--minutes')
   const MINUTES = mi !== -1 ? Number(argv[mi + 1]) : 10
 
   if (!arg) {
     console.error(
-      'usage: bare bin.mjs observe <pear://link | hypercore-key> [app-name] [--minutes N]'
+      'usage: bare bin.mjs observe <pear://link | hypercore-key | preset> [app-name] [--minutes N]'
     )
+    console.error(`presets: ${Object.keys(APP_PRESETS).join(', ')}`)
     process.exit(1)
   }
 
