@@ -28,7 +28,9 @@ const COMMANDS = {
   summary: () => import('./commands/summary.mjs'),
   topo: () => import('./commands/topo.mjs'),
   rpki: () => import('./commands/rpki.mjs'),
-  storeprobe: () => import('./commands/storeprobe.mjs')
+  storeprobe: () => import('./commands/storeprobe.mjs'),
+  paths: () => import('./commands/paths.mjs'),
+  stats: () => import('./commands/stats.mjs')
 }
 
 const HELP = `hyperdht-explorer v${pkg.version} — hyperdht network-health explorer
@@ -48,6 +50,8 @@ commands:
   topo         render topology.html (BGP/AS graph) (--refresh)
   rpki         RIPEstat RPKI validity per /24     (--refresh)
   storeprobe   storage-reliability decay probe    (--canaries N --checkpoints …)
+  paths        print the data/db/public storage paths
+  stats        print nodes.db size, row counts, last scan/probe
 
 global flags:
   --storage <dir>   override the data directory (default: OS app-data dir)

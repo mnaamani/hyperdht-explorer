@@ -22,6 +22,8 @@
     "topo": "bare bin.mjs topo",
     "rpki": "bare bin.mjs rpki",
     "storeprobe": "bare bin.mjs storeprobe",
+    "paths": "bare bin.mjs paths",
+    "stats": "bare bin.mjs stats",
     "format": "prettier . --write",
     "lint": "prettier . --check && lunte",
     "make": "node scripts/make.js",
