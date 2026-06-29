@@ -70,7 +70,9 @@ runtime: a standalone production binary uses `…/hyperdht-explorer`, while dev 
 data never mix. Precedence: `--storage` > `HYPERDHT_EXPLORER_HOME` > dev/prod default.
 `bin.mjs` resolves the dir once (`storage || dataDir()`) and exports it as
 `HYPERDHT_EXPLORER_HOME` so every command's `paths.mjs` agrees. It holds `nodes.db`,
-`public/*.html`, and the pear-runtime updater store. `openDb()` defaults to
+`public/*.html`, the pear-runtime updater store, and — once `observe --seed` runs —
+`seeder.seed` (the stable seeder identity) and `seed-store/` (the Corestore of seeded
+drive blocks). `openDb()` defaults to
 `paths.dbPath()` and calls `ensureDirs()`; render commands write to
 `paths.htmlPath('<name>.html')`. Never write outputs into the repo cwd. The `ops/`
 cron wrappers therefore require the **standalone** binary — running under `bare`
@@ -117,12 +119,27 @@ one thing to verify when first cutting a binary.
 - **RIPEstat rate limits** (used by `commands/topo.mjs` + `commands/rpki.mjs`): always add
   `sourceapp=hyperdht-explorer`; max 8 concurrent/IP (we go sequential + spaced); cache
   and refetch weekly; reuse one covering prefix across the /24s it contains.
-- `commands/observe.mjs` (`observe`) — seed-and-listen: announces an ephemeral keypair under a
-  public topic's discovery key, records connecting peers (incl. NAT'd) into the
-  `observations` table via `conn.rawStream.remoteHost/remotePort`. Self-timed
+- `commands/observe.mjs` (`observe`) — two modes, both record connecting peers (incl. NAT'd)
+  into the `observations` table via `conn.rawStream.remoteHost/remotePort`; self-timed
   (`--minutes`); HEALTH-ONLY (aggregate, public topics, never deanonymize — see the
-  `project-intent-health-not-deanon` memory). `ops/scheduled-observe.sh` runs it on a
-  separate cron schedule (env: OBSERVE_LINK/OBSERVE_APP/OBSERVE_MINUTES).
+  `project-intent-health-not-deanon` memory).
+  - **default (lurker):** raw `hyperdht`, **ephemeral** keypair — announce under the
+    topic's discovery key, record, `conn.end()`. Serves nothing.
+  - **`--seed`:** the D1 "benevolent seeding" step of `PROPOSAL-federation.md` — actually
+    replicate + serve the app's **public** update drive. Hyperswarm + Corestore + Hyperdrive,
+    join `drive.discoveryKey` as **server+client**, `store.replicate(conn)` per connection,
+    best-effort background prefetch of the **latest** version (sparse, not full history).
+    Uses a **stable** identity persisted as a 32-byte seed (`<dataDir>/seeder.seed` →
+    `crypto.keyPair(seed)`); corestore lives at `<dataDir>/seed-store`. BRIGHT LINE:
+    seed only public app-update feeds (signed by the app key ⇒ only authentic data),
+    never private/room data. `hyperdrive` is a direct dep for this; Corestore's
+    rocksdb-native backend has `.bare` prebuilds so it runs under Bare.
+
+    Flag parsing consumes `--minutes <n>`'s value (don't let it leak into the app-name positional).
+
+  - `ops/scheduled-observe.sh` runs it on a separate cron schedule (env:
+    OBSERVE_LINK/OBSERVE_APP/OBSERVE_MINUTES).
+
 - `hostKind(geoRow)` (db.mjs) classifies a network datacenter/mobile/proxy/residential
   from ip-api's `hosting`/`mobile`/`proxy` flags (geo.mjs fetches them; backfills older
   rows; `--refresh` forces all). Surfaced as the summary "Type" column + map colours.
