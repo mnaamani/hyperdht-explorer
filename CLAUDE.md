@@ -162,6 +162,22 @@ persists between runs, so always migrate rather than assuming a fresh DB.
   known 32-byte target. Don't add features that assume otherwise.
 - DHT node `id` is `hash(ip:port)` for ordinary nodes — **not** a connectable
   public key. Only announcer `publicKey`s (from `commands/seeders.mjs`) are connectable.
+  Verified in dht-rpc 6.27.0: `peer.id()` is `BLAKE2b` of the 6-byte ipv4
+  host:port (`lib/peer.js`), and `validateId` (`lib/io.js`) recomputes and rejects
+  any mismatch, so the id is bound to ip:port and non-spoofable (Sybil/eclipse
+  hardening). Connectable identities (announce/`connect`/`lookup`) are separate
+  **Ed25519** keypairs — a different layer from the routing-node id.
+- **IPv6 is not supported at any DHT layer — scan and observe are IPv4-only.** Not
+  a scanner gap; the protocol can't carry v6. Routing (dht-rpc): bind rejects
+  non-IPv4 (`index.js` `throw 'Host must be a IPv4 address'`), node addresses are
+  the 6-byte ipv4 encoding, host resolution forces `{ family: 4 }`. Connection
+  layer (hyperdht): the Noise payload reserves an `addresses6` field + flag
+  (`lib/messages.js`) but it's **inert** — always sent empty (`lib/connect.js`,
+  `lib/server.js`), connect/holepunch read `addresses4` only and the holepuncher
+  considers `family === 4` (`lib/holepuncher.js`); `relayAddresses` is ipv4 too.
+  So `prefixOf()`/the `/24` geo-join can safely assume IPv4. If hyperdht ever
+  activates `addresses6`, v6 would surface at the connection layer (observe) first;
+  the routing layer would need a wire-format + id-scheme change.
 - The full node RPC vocabulary (PING, FIND_NODE, LOOKUP, ANNOUNCE, MUTABLE/
   IMMUTABLE GET/PUT, PEER_HANDSHAKE…) has **no** "what are you running/seeding"
   command. Probing is limited to liveness.

@@ -4,22 +4,23 @@ import { openDb, prefixOf } from '../db.mjs'
 import { htmlPath, ensureDirs } from '../paths.mjs'
 
 // Render how the DHT network evolves over time -> timeline.html.
-// Four views:
-//   1. Discovery & churn  - new nodes/hour, cumulative set, departures/hour
-//   2. Presence + survival - approx concurrent presence, and a retention curve
-//   3. Snapshot metrics    - per-scan series (total/alive/seeders/rtt/geo)
-//   4. Diurnal             - activity by hour-of-day (datacenter vs dynamic signature)
+// Views:
+//   1. Node stability      - histogram of seen_count (one-shot fly-bys vs durable core)
+//   2. Identity stability  - same, but per public key (observations), deduped across IPs
+//   3. Presence + survival - approx concurrent presence, and a retention curve
+//   4. Snapshot metrics    - per-scan series (total/alive/seeders/rtt/geo)
+//   5. Diurnal             - activity by hour-of-day (datacenter vs dynamic signature)
 //
-// Views 1, 2, 4 are derived from each node's first_seen/last_seen (available now,
-// improve as the observed span grows). View 3 reads the `snapshots` table that the
-// crawler writes at the end of each run, so it fills in going forward.
+// Views 1, 3, 5 are derived from each node's first_seen/last_seen/seen_count
+// (available now, improve as the observed span grows). View 2 reads the `observations`
+// table (populated by `observe`); view 4 reads `snapshots` (one row per scan run).
 
 export function run(ctx) {
   const db = openDb()
   const HOUR = 3600 * 1000
   const now = Date.now()
 
-  const nodes = db.prepare('SELECT first_seen, last_seen FROM nodes').all()
+  const nodes = db.prepare('SELECT first_seen, last_seen, seen_count FROM nodes').all()
   const snapshots = db.prepare('SELECT * FROM snapshots ORDER BY ts').all()
   const storeProbes = db.prepare('SELECT * FROM store_probes ORDER BY ts').all()
 
@@ -33,31 +34,31 @@ export function run(ctx) {
   const labels = []
   const newPerHour = []
   const departuresPerHour = []
-  const cumulative = []
   const presence = []
   const diurnal = new Array(24).fill(0).map(() => ({ sum: 0, n: 0 }))
 
   if (nodes.length) {
     const minT = nodes.reduce((m, r) => Math.min(m, r.first_seen), Infinity)
+    const maxT = nodes.reduce((m, r) => Math.max(m, r.last_seen), 0)
     const start = Math.floor(minT / HOUR) * HOUR
-    const activeCutoff = now - HOUR // nodes seen within the last hour count as still present
+    const activeCutoff = now - HOUR // nodes not seen within the last hour count as departed
 
-    let cum = 0
-    for (let t = start; t <= now; t += HOUR) {
-      const mid = t + HOUR / 2
+    // Bound the timeline by the data (last sighting), not wall-clock now, so the
+    // gap between the last scan and now doesn't trail off into empty zero buckets.
+    for (let t = start; t <= maxT; t += HOUR) {
       let nu = 0
       let dep = 0
       let pres = 0
       for (const r of nodes) {
         if (r.first_seen >= t && r.first_seen < t + HOUR) nu++
         if (r.last_seen < activeCutoff && r.last_seen >= t && r.last_seen < t + HOUR) dep++
-        if (r.first_seen <= mid && r.last_seen >= mid) pres++
+        // present = observed interval overlaps this hour. Robust at sub-hour spans,
+        // where sampling a single mid-hour instant would miss the data entirely.
+        if (r.first_seen < t + HOUR && r.last_seen >= t) pres++
       }
-      cum += nu
       labels.push(fmt(t))
       newPerHour.push(nu)
       departuresPerHour.push(-dep) // negative so births/deaths mirror around zero
-      cumulative.push(cum)
       presence.push(pres)
       const hod = new Date(t).getHours()
       diurnal[hod].sum += pres
@@ -72,7 +73,9 @@ export function run(ctx) {
   if (ages.length) {
     const maxAge = ages[ages.length - 1] || 1
     const steps = 40
-    for (let i = 0; i <= steps; i++) {
+    // Stop before the exact maximum: x = maxAge isolates the single longest-lived
+    // node (~1/N), a degenerate tail that nosedives the curve to zero on the right.
+    for (let i = 0; i < steps; i++) {
       const x = (maxAge * i) / steps
       const surviving = ages.length - lowerBound(ages, x)
       survival.push({
@@ -91,6 +94,42 @@ export function run(ctx) {
     }
     return lo
   }
+
+  // --- stability distributions ------------------------------------------------
+  // How many times something is seen measures its staying power: 1 = a one-shot
+  // fly-by, high = durable, seen over and over. Bins keep resolution at the low
+  // end and group the long tail. Two flavours:
+  //   * by ip:port  — the `nodes` table's seen_count (one ++ per scan).
+  //   * by public key — the `observations` table, deduped by cryptographic
+  //     identity so a peer that roams across IPs (NAT/mobile) still counts once.
+  const stabilityBins = [
+    { label: '1', lo: 1, hi: 1 },
+    { label: '2', lo: 2, hi: 2 },
+    { label: '3', lo: 3, hi: 3 },
+    { label: '4', lo: 4, hi: 4 },
+    { label: '5', lo: 5, hi: 5 },
+    { label: '6–10', lo: 6, hi: 10 },
+    { label: '11–20', lo: 11, hi: 20 },
+    { label: '21–50', lo: 21, hi: 50 },
+    { label: '51–100', lo: 51, hi: 100 },
+    { label: '100+', lo: 101, hi: Infinity }
+  ]
+  function binStability(values) {
+    const counts = stabilityBins.map(() => 0)
+    for (const v of values) {
+      const i = stabilityBins.findIndex((b) => v >= b.lo && v <= b.hi)
+      if (i >= 0) counts[i]++
+    }
+    return { labels: stabilityBins.map((b) => b.label), counts, total: values.length }
+  }
+  const stability = binStability(nodes.map((r) => r.seen_count || 1))
+
+  // identity stability: aggregate observation count per public_key across all the
+  // endpoints (host:port) it was seen from, then bin the same way.
+  const obsRows = db.prepare('SELECT public_key, count FROM observations').all()
+  const obsByKey = new Map()
+  for (const o of obsRows) obsByKey.set(o.public_key, (obsByKey.get(o.public_key) || 0) + o.count)
+  const identity = binStability([...obsByKey.values()])
 
   // --- snapshot series --------------------------------------------------------
   const snap = {
@@ -133,9 +172,10 @@ export function run(ctx) {
     labels,
     newPerHour,
     departuresPerHour,
-    cumulative,
     presence,
     survival,
+    stability,
+    identity,
     diurnalAvg,
     snap,
     store
@@ -183,14 +223,26 @@ export function run(ctx) {
     <div class="sub">how the DHT population evolves over time &middot; ${nodes.length} nodes, ${snapshots.length} snapshot(s)</div>
 
     <div class="card">
+      <h2>Node stability</h2>
+      <p class="note">How many scans each node has appeared in (its <code>seen_count</code>). A tall left bar = lots of one-shot fly-bys; weight on the right = a durable core seen scan after scan.</p>
+      <canvas id="stability" height="90"></canvas>
+    </div>
+
+    <div class="card">
+      <h2>Identity stability</h2>
+      <p class="note">Like node stability, but keyed by <strong>public key</strong> instead of ip:port — from peers seen connecting via <code>observe</code>. Deduped by cryptographic identity, so a peer that roams across IPs (NAT / mobile) counts once. Weight on the right = recurring, persistent identities.</p>
+      <div id="identityWrap"><canvas id="identity" height="90"></canvas></div>
+    </div>
+
+    <div class="card">
       <h2>Discovery &amp; churn</h2>
-      <p class="note">New nodes discovered per hour (up) vs nodes last seen / departed per hour (down), with the cumulative known set.</p>
-      <canvas id="churn" height="110"></canvas>
+      <p class="note">New nodes discovered per hour (up) vs nodes last seen / departed per hour (down). The first hour (cold-start backlog) is omitted so the ongoing churn stays readable.</p>
+      <canvas id="churn" height="100"></canvas>
     </div>
 
     <div class="card">
       <h2>Concurrent presence</h2>
-      <p class="note">Approx nodes present per hour (first_seen ≤ t ≤ last_seen). Assumes continuous presence between first and last sighting.</p>
+      <p class="note">Approx distinct nodes active in each hour (their first–last sighting interval overlaps the hour). The timeline ends at the last observation, not the current clock.</p>
       <canvas id="presence" height="90"></canvas>
     </div>
 
@@ -232,19 +284,42 @@ export function run(ctx) {
     Chart.defaults.borderColor = 'rgba(120,200,150,0.10)';
     const noPoint = { pointRadius: 0, pointHoverRadius: 4, borderWidth: 2, tension: 0.25 };
 
+    new Chart(stability, {
+      type: 'bar',
+      data: { labels: D.stability.labels, datasets: [
+        { label: 'nodes', data: D.stability.counts, backgroundColor: '${GREEN}' } ] },
+      options: { responsive: true,
+        scales: { x: { title: { display: true, text: 'scans seen in (seen_count)' }, grid: { display: false } },
+          y: { beginAtZero: true, title: { display: true, text: 'nodes' } } },
+        plugins: { legend: { display: false } } }
+    });
+
+    if (D.identity.total) {
+      new Chart(identity, {
+        type: 'bar',
+        data: { labels: D.identity.labels, datasets: [
+          { label: 'identities', data: D.identity.counts, backgroundColor: '#ff9f1c' } ] },
+        options: { responsive: true,
+          scales: { x: { title: { display: true, text: 'times observed (by public key)' }, grid: { display: false } },
+            y: { beginAtZero: true, title: { display: true, text: 'identities' } } },
+          plugins: { legend: { display: false } } }
+      });
+    } else {
+      document.getElementById('identityWrap').innerHTML =
+        '<div class="empty">No observations yet — run <code>bare bin.mjs observe</code> (announces under a public topic and records connecting peers by public key) and regenerate.</div>';
+    }
+
+    // Drop the first hourly bucket: the initial scan dumps its whole backlog
+    // there as "new", a cold-start spike that dwarfs the real hour-to-hour churn.
+    const cStart = D.labels.length > 1 ? 1 : 0;
     new Chart(churn, {
-      data: {
-        labels: D.labels,
-        datasets: [
-          { type: 'bar', label: 'new/hour', data: D.newPerHour, backgroundColor: '${GREEN}', yAxisID: 'y' },
-          { type: 'bar', label: 'departed/hour', data: D.departuresPerHour, backgroundColor: '${RED}', yAxisID: 'y' },
-          { type: 'line', label: 'cumulative', data: D.cumulative, borderColor: '${CYAN}', backgroundColor: 'transparent', yAxisID: 'y1', ...noPoint }
-        ]
-      },
+      type: 'bar',
+      data: { labels: D.labels.slice(cStart), datasets: [
+        { label: 'new/hour', data: D.newPerHour.slice(cStart), backgroundColor: '${GREEN}' },
+        { label: 'departed/hour', data: D.departuresPerHour.slice(cStart), backgroundColor: '${RED}' } ] },
       options: { responsive: true, interaction: { mode: 'index', intersect: false },
         scales: { x: { ticks: { maxTicksLimit: 12 } },
-          y: { stacked: true, title: { display: true, text: 'nodes/hour' } },
-          y1: { position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'cumulative' } } } }
+          y: { stacked: true, title: { display: true, text: 'nodes/hour' } } } }
     });
 
     new Chart(presence, {
