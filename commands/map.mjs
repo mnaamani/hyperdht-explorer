@@ -105,8 +105,45 @@ export function run(ctx) {
     peers: a.peers.size
   }))
 
+  // observed participants aggregated to one bubble per country — placed at the mean
+  // lat/lon of that country's observed /24s (no external boundary data needed), sized
+  // by distinct participants, coloured by dominant host-type. The overview layer that
+  // keeps the map readable as /24s accumulate; the per-/24 dots remain as a detail layer.
+  const oc = new Map()
+  for (const a of obs.values()) {
+    if (!a.country) continue
+    let c = oc.get(a.country)
+    if (!c) {
+      c = {
+        country: a.country,
+        latSum: 0,
+        lonSum: 0,
+        nets: 0,
+        peers: new Set(),
+        kinds: {},
+        apps: new Set()
+      }
+      oc.set(a.country, c)
+    }
+    c.latSum += a.lat
+    c.lonSum += a.lon
+    c.nets++
+    for (const pk of a.peers) c.peers.add(pk)
+    c.kinds[a.kind] = (c.kinds[a.kind] || 0) + a.peers.size
+    for (const app of a.apps) c.apps.add(app)
+  }
+  const observedCountries = [...oc.values()].map((c) => ({
+    country: c.country,
+    lat: c.latSum / c.nets,
+    lon: c.lonSum / c.nets,
+    nets: c.nets,
+    peers: c.peers.size,
+    kind: Object.entries(c.kinds).sort((a, b) => b[1] - a[1])[0]?.[0] || 'unknown',
+    apps: [...c.apps].sort()
+  }))
+
   console.log(
-    `map: ${points.length} networks, ${located}/${totalNodes} nodes located, ${observed.length} observed-peer network(s)`
+    `map: ${points.length} networks, ${located}/${totalNodes} nodes located, ${observed.length} observed-peer network(s) across ${observedCountries.length} country(ies)`
   )
 
   const html = `<!DOCTYPE html>
@@ -132,6 +169,8 @@ export function run(ctx) {
   <script>
     const POINTS = ${JSON.stringify(points)};
     const OBSERVED = ${JSON.stringify(observed)};
+    const OBSERVED_COUNTRIES = ${JSON.stringify(observedCountries)};
+    const KIND_COLOR = { residential: '#b6ff3c', mobile: '#4cd9ff', datacenter: '#5f7d6e', proxy: '#ff2bd6', unknown: '#5f7d6e' };
 
     const map = L.map('map', { worldCopyJump: true }).setView([20, 0], 2);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -220,13 +259,29 @@ export function run(ctx) {
         (o.apps.length ? 'app: <b>' + o.apps.join(', ') + '</b>' : '')
       ).addTo(observedLayer);
     }
-    map.addLayer(observedLayer);
+
+    // observed participants aggregated per country — overview layer (on by default).
+    const observedCountryLayer = L.layerGroup();
+    for (const c of OBSERVED_COUNTRIES) {
+      const col = KIND_COLOR[c.kind] || '#ff9f1c';
+      L.circleMarker([c.lat, c.lon], {
+        radius: 8 + Math.min(24, Math.log2(c.peers + 1) * 4),
+        color: col, fillColor: col, fillOpacity: 0.35, weight: 2
+      }).bindPopup(
+        '<b>' + c.country + '</b><br>' +
+        '👁 ' + c.peers + ' participant(s) &middot; ' + c.nets + ' /24(s)<br>' +
+        'dominant type: <b>' + c.kind + '</b><br>' +
+        (c.apps.length ? 'app: <b>' + c.apps.join(', ') + '</b>' : '')
+      ).addTo(observedCountryLayer);
+    }
+    map.addLayer(observedCountryLayer); // overview on; per-/24 detail is opt-in below
 
     const seederCount = POINTS.filter((p) => p.apps.length).length;
     L.control.layers(null, {
       'All networks': cluster,
       ['★ App seeders (' + seederCount + ')']: seederLayer,
-      ['👁 Observed participants (' + observedPeers + ')']: observedLayer
+      ['🌐 Observed by country (' + OBSERVED_COUNTRIES.length + ')']: observedCountryLayer,
+      ['👁 Observed /24 detail (' + observedPeers + ')']: observedLayer
     }, { collapsed: false }).addTo(map);
 
     const legend = L.control({ position: 'bottomright' });
@@ -240,7 +295,9 @@ export function run(ctx) {
         '<i style="background:#e74c3c"></i>1 (transient)<br>' +
         '<i style="background:#777"></i>unreachable<br>' +
         '<i style="background:none;border:2px solid #ff2bd6"></i>app seeder<br>' +
-        '<i style="background:#ff9f1c"></i>observed participant';
+        '<i style="background:#ff9f1c"></i>observed /24 (detail)<br>' +
+        '<i style="background:#b6ff3c"></i>observed by country<br>' +
+        '<span style="color:#5f7d6e;font-size:11px">↑ size = participants, colour = host-type</span>';
       return div;
     };
     legend.addTo(map);
