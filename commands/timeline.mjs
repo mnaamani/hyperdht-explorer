@@ -1,7 +1,7 @@
-import process from 'bare-process'
-import fs from 'bare-fs'
-import { openDb, prefixOf } from '../db.mjs'
-import { htmlPath, ensureDirs } from '../paths.mjs'
+import process from 'bare-process';
+import fs from 'bare-fs';
+import { openDb, prefixOf } from '../db.mjs';
+import { htmlPath, ensureDirs } from '../paths.mjs';
 
 // Render how the DHT network evolves over time -> timeline.html.
 // Views:
@@ -16,83 +16,107 @@ import { htmlPath, ensureDirs } from '../paths.mjs'
 // table (populated by `observe`); view 4 reads `snapshots` (one row per scan run).
 
 export function run(ctx) {
-  const db = openDb()
-  const HOUR = 3600 * 1000
-  const now = Date.now()
+  const db = openDb();
+  const HOUR = 3600 * 1000;
+  const now = Date.now();
 
-  const nodes = db.prepare('SELECT first_seen, last_seen, seen_count FROM nodes').all()
-  const snapshots = db.prepare('SELECT * FROM snapshots ORDER BY ts').all()
-  const storeProbes = db.prepare('SELECT * FROM store_probes ORDER BY ts').all()
+  const nodes = db
+    .prepare('SELECT first_seen, last_seen, seen_count FROM nodes')
+    .all();
+  const snapshots = db.prepare('SELECT * FROM snapshots ORDER BY ts').all();
+  const storeProbes = db
+    .prepare('SELECT * FROM store_probes ORDER BY ts')
+    .all();
 
   function fmt(ts) {
-    const d = new Date(ts)
-    const p = (n) => String(n).padStart(2, '0')
-    return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:00`
+    const date = new Date(ts);
+    const pad = (num) => String(num).padStart(2, '0');
+    return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:00`;
   }
 
   // --- hourly buckets across the observed span --------------------------------
-  const labels = []
-  const newPerHour = []
-  const departuresPerHour = []
-  const presence = []
-  const diurnal = new Array(24).fill(0).map(() => ({ sum: 0, n: 0 }))
+  const labels = [];
+  const newPerHour = [];
+  const departuresPerHour = [];
+  const presence = [];
+  const diurnal = new Array(24).fill(0).map(() => ({ sum: 0, n: 0 }));
 
   if (nodes.length) {
-    const minT = nodes.reduce((m, r) => Math.min(m, r.first_seen), Infinity)
-    const maxT = nodes.reduce((m, r) => Math.max(m, r.last_seen), 0)
-    const start = Math.floor(minT / HOUR) * HOUR
-    const activeCutoff = now - HOUR // nodes not seen within the last hour count as departed
+    const minT = nodes.reduce(
+      (acc, row) => Math.min(acc, row.first_seen),
+      Infinity
+    );
+    const maxT = nodes.reduce((acc, row) => Math.max(acc, row.last_seen), 0);
+    const start = Math.floor(minT / HOUR) * HOUR;
+    const activeCutoff = now - HOUR; // nodes not seen within the last hour count as departed
 
     // Bound the timeline by the data (last sighting), not wall-clock now, so the
     // gap between the last scan and now doesn't trail off into empty zero buckets.
     for (let t = start; t <= maxT; t += HOUR) {
-      let nu = 0
-      let dep = 0
-      let pres = 0
-      for (const r of nodes) {
-        if (r.first_seen >= t && r.first_seen < t + HOUR) nu++
-        if (r.last_seen < activeCutoff && r.last_seen >= t && r.last_seen < t + HOUR) dep++
+      let nu = 0;
+      let dep = 0;
+      let pres = 0;
+      for (const row of nodes) {
+        if (row.first_seen >= t && row.first_seen < t + HOUR) {
+          nu++;
+        }
+        if (
+          row.last_seen < activeCutoff &&
+          row.last_seen >= t &&
+          row.last_seen < t + HOUR
+        ) {
+          dep++;
+        }
         // present = observed interval overlaps this hour. Robust at sub-hour spans,
         // where sampling a single mid-hour instant would miss the data entirely.
-        if (r.first_seen < t + HOUR && r.last_seen >= t) pres++
+        if (row.first_seen < t + HOUR && row.last_seen >= t) {
+          pres++;
+        }
       }
-      labels.push(fmt(t))
-      newPerHour.push(nu)
-      departuresPerHour.push(-dep) // negative so births/deaths mirror around zero
-      presence.push(pres)
-      const hod = new Date(t).getHours()
-      diurnal[hod].sum += pres
-      diurnal[hod].n++
+      labels.push(fmt(t));
+      newPerHour.push(nu);
+      departuresPerHour.push(-dep); // negative so births/deaths mirror around zero
+      presence.push(pres);
+      const hod = new Date(t).getHours();
+      diurnal[hod].sum += pres;
+      diurnal[hod].n++;
     }
   }
-  const diurnalAvg = diurnal.map((d) => (d.n ? Math.round(d.sum / d.n) : 0))
+  const diurnalAvg = diurnal.map((bucket) =>
+    bucket.n ? Math.round(bucket.sum / bucket.n) : 0
+  );
 
   // --- survival / retention curve ---------------------------------------------
-  const ages = nodes.map((r) => (r.last_seen - r.first_seen) / HOUR).sort((a, b) => a - b)
-  const survival = []
+  const ages = nodes
+    .map((row) => (row.last_seen - row.first_seen) / HOUR)
+    .sort((a, b) => a - b);
+  const survival = [];
   if (ages.length) {
-    const maxAge = ages[ages.length - 1] || 1
-    const steps = 40
+    const maxAge = ages[ages.length - 1] || 1;
+    const steps = 40;
     // Stop before the exact maximum: x = maxAge isolates the single longest-lived
     // node (~1/N), a degenerate tail that nosedives the curve to zero on the right.
     for (let i = 0; i < steps; i++) {
-      const x = (maxAge * i) / steps
-      const surviving = ages.length - lowerBound(ages, x)
+      const x = (maxAge * i) / steps;
+      const surviving = ages.length - lowerBound(ages, x);
       survival.push({
         x: Math.round(x * 10) / 10,
         y: Math.round((surviving / ages.length) * 1000) / 10
-      })
+      });
     }
   }
-  function lowerBound(arr, v) {
-    let lo = 0
-    let hi = arr.length
+  function lowerBound(arr, value) {
+    let lo = 0;
+    let hi = arr.length;
     while (lo < hi) {
-      const m = (lo + hi) >> 1
-      if (arr[m] < v) lo = m + 1
-      else hi = m
+      const mid = (lo + hi) >> 1;
+      if (arr[mid] < value) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
     }
-    return lo
+    return lo;
   }
 
   // --- stability distributions ------------------------------------------------
@@ -113,60 +137,83 @@ export function run(ctx) {
     { label: '21–50', lo: 21, hi: 50 },
     { label: '51–100', lo: 51, hi: 100 },
     { label: '100+', lo: 101, hi: Infinity }
-  ]
+  ];
   function binStability(values) {
-    const counts = stabilityBins.map(() => 0)
-    for (const v of values) {
-      const i = stabilityBins.findIndex((b) => v >= b.lo && v <= b.hi)
-      if (i >= 0) counts[i]++
+    const counts = stabilityBins.map(() => 0);
+    for (const value of values) {
+      const i = stabilityBins.findIndex((b) => value >= b.lo && value <= b.hi);
+      if (i >= 0) {
+        counts[i]++;
+      }
     }
-    return { labels: stabilityBins.map((b) => b.label), counts, total: values.length }
+    return {
+      labels: stabilityBins.map((b) => b.label),
+      counts,
+      total: values.length
+    };
   }
-  const stability = binStability(nodes.map((r) => r.seen_count || 1))
+  const stability = binStability(nodes.map((row) => row.seen_count || 1));
 
   // identity stability: aggregate observation count per public_key across all the
   // endpoints (host:port) it was seen from, then bin the same way.
-  const obsRows = db.prepare('SELECT public_key, count FROM observations').all()
-  const obsByKey = new Map()
-  for (const o of obsRows) obsByKey.set(o.public_key, (obsByKey.get(o.public_key) || 0) + o.count)
-  const identity = binStability([...obsByKey.values()])
+  const obsRows = db
+    .prepare('SELECT public_key, count FROM observations')
+    .all();
+  const obsByKey = new Map();
+  for (const obs of obsRows) {
+    obsByKey.set(
+      obs.public_key,
+      (obsByKey.get(obs.public_key) || 0) + obs.count
+    );
+  }
+  const identity = binStability([...obsByKey.values()]);
 
   // --- snapshot series --------------------------------------------------------
   const snap = {
-    labels: snapshots.map((s) => fmt(s.ts)),
-    total: snapshots.map((s) => s.total_nodes),
-    alive: snapshots.map((s) => s.alive),
-    seeders: snapshots.map((s) => s.seeders),
-    countries: snapshots.map((s) => s.countries),
-    medianRtt: snapshots.map((s) => s.median_rtt),
-    observed: snapshots.map((s) => s.observed)
-  }
+    labels: snapshots.map((row) => fmt(row.ts)),
+    total: snapshots.map((row) => row.total_nodes),
+    alive: snapshots.map((row) => row.alive),
+    seeders: snapshots.map((row) => row.seeders),
+    countries: snapshots.map((row) => row.countries),
+    medianRtt: snapshots.map((row) => row.median_rtt),
+    observed: snapshots.map((row) => row.observed)
+  };
 
   // --- storage-health series (storeprobe.mjs) ----------------------------------
   const store = {
-    labels: storeProbes.map((s) => fmt(s.ts)),
-    putPct: storeProbes.map((s) => (s.canaries ? Math.round((s.put_ok / s.canaries) * 100) : 0)),
-    getPct: storeProbes.map((s) => (s.put_ok ? Math.round((s.get_ok / s.put_ok) * 100) : 0)),
-    persistPct: storeProbes.map((s) => Math.round((s.persistence || 0) * 100)),
-    repInitial: storeProbes.map((s) => Math.round((s.replicas_initial || 0) * 10) / 10),
-    repAfter: storeProbes.map((s) => Math.round((s.replicas_after || 0) * 10) / 10)
-  }
+    labels: storeProbes.map((row) => fmt(row.ts)),
+    putPct: storeProbes.map((row) =>
+      row.canaries ? Math.round((row.put_ok / row.canaries) * 100) : 0
+    ),
+    getPct: storeProbes.map((row) =>
+      row.put_ok ? Math.round((row.get_ok / row.put_ok) * 100) : 0
+    ),
+    persistPct: storeProbes.map((row) =>
+      Math.round((row.persistence || 0) * 100)
+    ),
+    repInitial: storeProbes.map(
+      (row) => Math.round((row.replicas_initial || 0) * 10) / 10
+    ),
+    repAfter: storeProbes.map(
+      (row) => Math.round((row.replicas_after || 0) * 10) / 10
+    )
+  };
   // decay curve (replicas vs minutes-since-put) from the most recent probe
-  let decay = []
+  let decay = [];
   for (let i = storeProbes.length - 1; i >= 0; i--) {
     if (storeProbes[i].decay) {
       try {
-        decay = JSON.parse(storeProbes[i].decay)
+        decay = JSON.parse(storeProbes[i].decay);
       } catch {}
-      break
+      break;
     }
   }
-  store.decay = decay.map((d) => ({ x: d.m, y: d.replicas }))
-  store.ttl = 20 // hyperdht record TTL (minutes), for the marker line
+  store.decay = decay.map((point) => ({ x: point.m, y: point.replicas }));
+  store.ttl = 20; // hyperdht record TTL (minutes), for the marker line
 
   console.log(
     `timeline: ${nodes.length} nodes over ${labels.length} hourly buckets, ${snapshots.length} snapshot(s), ${storeProbes.length} store-probe(s)`
-  )
+  );
 
   const DATA = {
     labels,
@@ -179,18 +226,18 @@ export function run(ctx) {
     diurnalAvg,
     snap,
     store
-  }
+  };
 
   // --- Pear-inspired theme ----------------------------------------------------
-  const BG = '#060a08'
-  const PANEL = '#0b1410'
-  const TEXT = '#eafff2'
-  const MUTED = '#5f7d6e'
-  const GREEN = '#b6ff3c'
-  const GREEN2 = '#5bd06a'
-  const CYAN = '#4cd9ff'
-  const SEEDER = '#ff2bd6'
-  const RED = '#e67e22'
+  const BG = '#060a08';
+  const PANEL = '#0b1410';
+  const TEXT = '#eafff2';
+  const MUTED = '#5f7d6e';
+  const GREEN = '#b6ff3c';
+  const GREEN2 = '#5bd06a';
+  const CYAN = '#4cd9ff';
+  const SEEDER = '#ff2bd6';
+  const RED = '#e67e22';
 
   const html = `<!DOCTYPE html>
 <html>
@@ -421,12 +468,12 @@ export function run(ctx) {
   </script>
 </body>
 </html>
-`
+`;
 
-  ensureDirs()
-  const out = htmlPath('timeline.html')
-  fs.writeFileSync(out, html)
-  console.log('timeline: wrote timeline.html')
-  console.log(`open it in a browser:  file://${out}`)
-  db.close()
+  ensureDirs();
+  const out = htmlPath('timeline.html');
+  fs.writeFileSync(out, html);
+  console.log('timeline: wrote timeline.html');
+  console.log(`open it in a browser:  file://${out}`);
+  db.close();
 }

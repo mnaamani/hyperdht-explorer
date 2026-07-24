@@ -1,0 +1,6 @@
+{
+  "env": ["node", "browser"],
+  "rules": {
+    "require-await": "off"
+  }
+}

@@ -1,7 +1,7 @@
-import process from 'bare-process'
-import fs from 'bare-fs'
-import { openDb } from '../db.mjs'
-import { htmlPath, ensureDirs } from '../paths.mjs'
+import process from 'bare-process';
+import fs from 'bare-fs';
+import { openDb } from '../db.mjs';
+import { htmlPath, ensureDirs } from '../paths.mjs';
 
 // Render the discovered nodes onto a circular projection of the 256-bit Kademlia
 // ID space ("the ring"). Each node is placed by the high bits of its id; dot size
@@ -14,69 +14,81 @@ import { htmlPath, ensureDirs } from '../paths.mjs'
 // mean routing closeness. Output is a self-contained ring.html (inline SVG, no CDN).
 
 export function run(ctx) {
-  const db = openDb()
+  const db = openDb();
 
   const rows = db
-    .prepare('SELECT id, seen_count, sessions, app_seeder FROM nodes WHERE id IS NOT NULL')
-    .all()
-  const skipped = db.prepare('SELECT COUNT(*) AS n FROM nodes WHERE id IS NULL').get().n
+    .prepare(
+      'SELECT id, seen_count, sessions, app_seeder FROM nodes WHERE id IS NOT NULL'
+    )
+    .all();
+  const skipped = db
+    .prepare('SELECT COUNT(*) AS n FROM nodes WHERE id IS NULL')
+    .get().n;
 
   // --- Pear-inspired theme ----------------------------------------------------
-  const BG = '#060a08' // near-black with a faint green tint
-  const PANEL = 'rgba(8,16,12,0.82)'
-  const TEXT = '#eafff2'
-  const MUTED = '#5f7d6e'
-  const GRID = 'rgba(120,200,150,0.10)'
-  const SEEDER = '#ff2bd6' // matches the world map's seeder highlight
+  const BG = '#060a08'; // near-black with a faint green tint
+  const PANEL = 'rgba(8,16,12,0.82)';
+  const TEXT = '#eafff2';
+  const MUTED = '#5f7d6e';
+  const GRID = 'rgba(120,200,150,0.10)';
+  const SEEDER = '#ff2bd6'; // matches the world map's seeder highlight
   // stability scale: dim → bright pear-green
   function color(sessions) {
-    if (sessions >= 10) return '#b6ff3c'
-    if (sessions >= 5) return '#8ef94b'
-    if (sessions >= 3) return '#5bd06a'
-    if (sessions >= 2) return '#3f9d62'
-    return '#2f6f4a'
+    if (sessions >= 10) {
+      return '#b6ff3c';
+    }
+    if (sessions >= 5) {
+      return '#8ef94b';
+    }
+    if (sessions >= 3) {
+      return '#5bd06a';
+    }
+    if (sessions >= 2) {
+      return '#3f9d62';
+    }
+    return '#2f6f4a';
   }
 
   // --- geometry ---------------------------------------------------------------
-  const SIZE = 1000
-  const CX = SIZE / 2
-  const CY = SIZE / 2
-  const R = 420 // base ring radius
-  const BAND = 46 // radial jitter band so overlapping ids spread into an annulus
-  const TWO_PI = Math.PI * 2
+  const SIZE = 1000;
+  const CX = SIZE / 2;
+  const CY = SIZE / 2;
+  const BASE_RADIUS = 420; // base ring radius
+  const BAND = 46; // radial jitter band so overlapping ids spread into an annulus
+  const TWO_PI = Math.PI * 2;
 
   function hexToFrac(idHex) {
     // top 32 bits of the id -> fraction of the keyspace [0,1)
-    return parseInt(idHex.slice(0, 8), 16) / 0x100000000
+    return parseInt(idHex.slice(0, 8), 16) / 0x100000000;
   }
   function jitter(idHex) {
     // next 16 bits -> deterministic radial offset within BAND
-    return parseInt(idHex.slice(8, 12), 16) / 0x10000
+    return parseInt(idHex.slice(8, 12), 16) / 0x10000;
   }
 
-  const dots = []
-  for (const n of rows) {
-    const frac = hexToFrac(n.id)
-    const angle = frac * TWO_PI - Math.PI / 2 // 0x00.. at 12 o'clock
-    const r = R - jitter(n.id) * BAND
-    const x = CX + r * Math.cos(angle)
-    const y = CY + r * Math.sin(angle)
-    const size = 1.5 + Math.min(10, Math.log2(n.seen_count + 1) * 1.15)
-    const c = color(n.sessions)
-    const seeder = !!n.app_seeder
-    dots.push({ x, y, size, c, seeder })
+  const dots = [];
+  for (const node of rows) {
+    const frac = hexToFrac(node.id);
+    const angle = frac * TWO_PI - Math.PI / 2; // 0x00.. at 12 o'clock
+    const radius = BASE_RADIUS - jitter(node.id) * BAND;
+    const x = CX + radius * Math.cos(angle);
+    const y = CY + radius * Math.sin(angle);
+    const size = 1.5 + Math.min(10, Math.log2(node.seen_count + 1) * 1.15);
+    const dotColor = color(node.sessions);
+    const seeder = !!node.app_seeder;
+    dots.push({ x, y, size, c: dotColor, seeder });
   }
   // draw bigger/popular dots last so they sit on top
-  dots.sort((a, b) => a.size - b.size)
+  dots.sort((a, b) => a.size - b.size);
 
   const dotSvg = dots
     .map(
-      (d) =>
-        `<circle cx="${d.x.toFixed(1)}" cy="${d.y.toFixed(1)}" r="${d.size.toFixed(1)}" fill="${d.c}" fill-opacity="0.85"` +
-        (d.seeder ? ` stroke="${SEEDER}" stroke-width="2"` : '') +
+      (dot) =>
+        `<circle cx="${dot.x.toFixed(1)}" cy="${dot.y.toFixed(1)}" r="${dot.size.toFixed(1)}" fill="${dot.c}" fill-opacity="0.85"` +
+        (dot.seeder ? ` stroke="${SEEDER}" stroke-width="2"` : '') +
         '/>'
     )
-    .join('\n')
+    .join('\n');
 
   // quarter labels around the ring (id-space landmarks)
   const ticks = [
@@ -84,21 +96,21 @@ export function run(ctx) {
     { f: 0.25, label: '0x40…' },
     { f: 0.5, label: '0x80…' },
     { f: 0.75, label: '0xC0…' }
-  ]
+  ];
   const tickSvg = ticks
     .map((t) => {
-      const a = t.f * TWO_PI - Math.PI / 2
-      const x = CX + (R + 28) * Math.cos(a)
-      const y = CY + (R + 28) * Math.sin(a)
-      return `<text x="${x.toFixed(0)}" y="${y.toFixed(0)}" fill="${MUTED}" font-size="15" text-anchor="middle" dominant-baseline="middle">${t.label}</text>`
+      const a = t.f * TWO_PI - Math.PI / 2;
+      const x = CX + (BASE_RADIUS + 28) * Math.cos(a);
+      const y = CY + (BASE_RADIUS + 28) * Math.sin(a);
+      return `<text x="${x.toFixed(0)}" y="${y.toFixed(0)}" fill="${MUTED}" font-size="15" text-anchor="middle" dominant-baseline="middle">${t.label}</text>`;
     })
-    .join('\n')
+    .join('\n');
 
-  const seederCount = dots.filter((d) => d.seeder).length
+  const seederCount = dots.filter((dot) => dot.seeder).length;
 
   console.log(
     `ring: plotted ${dots.length} node(s)${skipped ? `, skipped ${skipped} without id` : ''}, ${seederCount} seeder(s)`
-  )
+  );
 
   const html = `<!DOCTYPE html>
 <html>
@@ -132,10 +144,10 @@ export function run(ctx) {
 
   <div id="wrap">
     <svg viewBox="0 0 ${SIZE} ${SIZE}" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="${GRID}" stroke-width="1.5"/>
-      <circle cx="${CX}" cy="${CY}" r="${R - BAND}" fill="none" stroke="${GRID}" stroke-width="1"/>
-      <line x1="${CX}" y1="${CY - R - 10}" x2="${CX}" y2="${CY + R + 10}" stroke="${GRID}" stroke-width="1"/>
-      <line x1="${CX - R - 10}" y1="${CY}" x2="${CX + R + 10}" y2="${CY}" stroke="${GRID}" stroke-width="1"/>
+      <circle cx="${CX}" cy="${CY}" r="${BASE_RADIUS}" fill="none" stroke="${GRID}" stroke-width="1.5"/>
+      <circle cx="${CX}" cy="${CY}" r="${BASE_RADIUS - BAND}" fill="none" stroke="${GRID}" stroke-width="1"/>
+      <line x1="${CX}" y1="${CY - BASE_RADIUS - 10}" x2="${CX}" y2="${CY + BASE_RADIUS + 10}" stroke="${GRID}" stroke-width="1"/>
+      <line x1="${CX - BASE_RADIUS - 10}" y1="${CY}" x2="${CX + BASE_RADIUS + 10}" y2="${CY}" stroke="${GRID}" stroke-width="1"/>
       ${tickSvg}
       ${dotSvg}
     </svg>
@@ -156,12 +168,12 @@ export function run(ctx) {
   </div>
 </body>
 </html>
-`
+`;
 
-  ensureDirs()
-  const out = htmlPath('ring.html')
-  fs.writeFileSync(out, html)
-  console.log(`ring: wrote ring.html`)
-  console.log(`open it in a browser:  file://${out}`)
-  db.close()
+  ensureDirs();
+  const out = htmlPath('ring.html');
+  fs.writeFileSync(out, html);
+  console.log(`ring: wrote ring.html`);
+  console.log(`open it in a browser:  file://${out}`);
+  db.close();
 }

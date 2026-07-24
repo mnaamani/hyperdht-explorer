@@ -1,8 +1,8 @@
-import DHT from 'hyperdht'
-import b4a from 'b4a'
-import sodium from 'sodium-universal'
-import process from 'bare-process'
-import { openDb, prefixOf, isPrivateIp } from '../db.mjs'
+import DHT from 'hyperdht';
+import b4a from 'b4a';
+import sodium from 'sodium-universal';
+import process from 'bare-process';
+import { openDb, prefixOf, isPrivateIp } from '../db.mjs';
 
 // ---------------------------------------------------------------------------
 // hyperdht-explorer: random-walk crawler for the hyperdht (Kademlia) node network.
@@ -32,47 +32,57 @@ import { openDb, prefixOf, isPrivateIp } from '../db.mjs'
 // ---------------------------------------------------------------------------
 
 export async function run(ctx) {
-  const argv = ctx.argv
+  const argv = ctx.argv;
 
   // Parse `--flag value` options and collect bare positionals from argv[2:].
-  const valueFlags = new Set(['--for', '--queries', '--prune-hours'])
-  const flags = {}
-  const positionals = []
+  const valueFlags = new Set(['--for', '--queries', '--prune-hours']);
+  const flags = {};
+  const positionals = [];
   for (let i = 2; i < argv.length; i++) {
-    const a = argv[i]
-    if (valueFlags.has(a)) flags[a] = argv[++i]
-    else if (!a.startsWith('--')) positionals.push(a)
+    const a = argv[i];
+    if (valueFlags.has(a)) {
+      flags[a] = argv[++i];
+    } else if (!a.startsWith('--')) {
+      positionals.push(a);
+    }
   }
 
-  const runForSeconds = Number(flags['--for']) || 0
-  const maxQueries = Number(flags['--queries']) || 0
+  const runForSeconds = Number(flags['--for']) || 0;
+  const maxQueries = Number(flags['--queries']) || 0;
   // Drop nodes not seen within this many hours (0 disables pruning). Default 72h.
-  const pruneHours = flags['--prune-hours'] !== undefined ? Number(flags['--prune-hours']) : 72
-  const arg = positionals[0] // optional topic hash
+  const pruneHours =
+    flags['--prune-hours'] !== undefined ? Number(flags['--prune-hours']) : 72;
+  const arg = positionals[0]; // optional topic hash
 
-  const hex = (buf) => (buf ? b4a.toString(buf, 'hex') : null)
+  const hex = (buf) => (buf ? b4a.toString(buf, 'hex') : null);
 
   function randomTarget() {
-    const buf = b4a.alloc(32)
-    sodium.randombytes_buf(buf)
-    return buf
+    const buf = b4a.alloc(32);
+    sodium.randombytes_buf(buf);
+    return buf;
   }
 
   function ago(ms) {
-    const s = Math.max(0, Math.round((Date.now() - ms) / 1000))
-    if (s < 60) return `${s}s`
-    if (s < 3600) return `${Math.round(s / 60)}m`
-    if (s < 86400) return `${Math.round(s / 3600)}h`
-    return `${Math.round(s / 86400)}d`
+    const secs = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (secs < 60) {
+      return `${secs}s`;
+    }
+    if (secs < 3600) {
+      return `${Math.round(secs / 60)}m`;
+    }
+    if (secs < 86400) {
+      return `${Math.round(secs / 3600)}h`;
+    }
+    return `${Math.round(secs / 86400)}d`;
   }
 
   // --- database --------------------------------------------------------------
 
-  const db = openDb()
+  const db = openDb();
 
   const stmtExists = db.prepare(
     'SELECT first_seen, sessions FROM nodes WHERE host = ? AND port = ?'
-  )
+  );
   // First sighting of a node within this run: bump seen_count AND sessions.
   const stmtUpsert = db.prepare(`
   INSERT INTO nodes (host, port, id, first_seen, last_seen, seen_count, sessions)
@@ -82,134 +92,168 @@ export async function run(ctx) {
     seen_count = nodes.seen_count + 1,
     sessions   = nodes.sessions + 1,
     id         = COALESCE(excluded.id, nodes.id)
-`)
+`);
   // Repeat sighting within the same run: bump seen_count only (not sessions).
   const stmtBump = db.prepare(`
   UPDATE nodes SET last_seen = ?, seen_count = seen_count + 1, id = COALESCE(?, id)
   WHERE host = ? AND port = ?
-`)
+`);
   const stmtKnownPeers = db.prepare(
     'SELECT host, port FROM nodes ORDER BY last_seen DESC, sessions DESC LIMIT ?'
-  )
-  const stmtPrune = db.prepare('DELETE FROM nodes WHERE last_seen < ?')
+  );
+  const stmtPrune = db.prepare('DELETE FROM nodes WHERE last_seen < ?');
 
   // Drop stale nodes not seen within pruneHours. Returns number removed.
   // (The geo cache is intentionally left intact — it's keyed by /24 and reusable
   // if a network reappears, saving an ip-api lookup.)
   function prune() {
-    if (!(pruneHours > 0)) return 0
-    const cutoff = Date.now() - pruneHours * 3600 * 1000
-    const { changes } = stmtPrune.run(cutoff)
-    if (changes) console.log(`pruned ${changes} node(s) not seen in ${pruneHours}h`)
-    prunedThisRun += changes
-    return changes
+    if (!(pruneHours > 0)) {
+      return 0;
+    }
+    const cutoff = Date.now() - pruneHours * 3600 * 1000;
+    const { changes } = stmtPrune.run(cutoff);
+    if (changes) {
+      console.log(`pruned ${changes} node(s) not seen in ${pruneHours}h`);
+    }
+    prunedThisRun += changes;
+    return changes;
   }
 
-  const seenThisRun = new Set() // host:port observed during this run
-  let queries = 0
-  let newThisRun = 0 // nodes first ever seen during this run
-  let prunedThisRun = 0 // lunte-disable-line prefer-const — reassigned inside nested prune()
+  const seenThisRun = new Set(); // host:port observed during this run
+  let queries = 0;
+  let newThisRun = 0; // nodes first ever seen during this run
+  let prunedThisRun = 0; // lunte-disable-line prefer-const — reassigned inside nested prune()
 
   function record(node) {
-    if (!node || !node.host || !node.port) return
-    if (isPrivateIp(node.host)) return // skip any node advertising a LAN/reserved address
-    const addr = node.host + ':' + node.port
-    const idHex = hex(node.id)
-    const now = Date.now()
+    if (!node || !node.host || !node.port) {
+      return;
+    }
+    if (isPrivateIp(node.host)) {
+      return;
+    } // skip any node advertising a LAN/reserved address
+    const addr = node.host + ':' + node.port;
+    const idHex = hex(node.id);
+    const now = Date.now();
 
     if (seenThisRun.has(addr)) {
-      stmtBump.run(now, idHex, node.host, node.port)
-      return
+      stmtBump.run(now, idHex, node.host, node.port);
+      return;
     }
-    seenThisRun.add(addr)
+    seenThisRun.add(addr);
 
-    const prior = stmtExists.get(node.host, node.port)
-    stmtUpsert.run(node.host, node.port, idHex, now, now)
+    const prior = stmtExists.get(node.host, node.port);
+    stmtUpsert.run(node.host, node.port, idHex, now, now);
 
     if (!prior) {
-      newThisRun++
-      console.log(`+ NEW    ${addr.padEnd(21)} id=${idHex || '?'}`)
+      newThisRun++;
+      console.log(`+ NEW    ${addr.padEnd(21)} id=${idHex || '?'}`);
     } else {
       console.log(
         `~ known  ${addr.padEnd(21)} sessions=${prior.sessions + 1}, first seen ${ago(prior.first_seen)} ago`
-      )
+      );
+    }
+  }
+
+  // Record a findNode response: the responder itself plus every closer node it
+  // volunteered. Extracted from the crawl loop to keep that nesting shallow.
+  function recordResponse(msg) {
+    record(msg.from);
+    if (!msg.closerNodes) {
+      return;
+    }
+    for (const closer of msg.closerNodes) {
+      record(closer);
     }
   }
 
   // --- dht --------------------------------------------------------------------
 
   // Prune stale nodes up front so we don't seed the routing table with dead ones.
-  prune()
-  const knownPeers = stmtKnownPeers.all(200)
+  prune();
+  const knownPeers = stmtKnownPeers.all(200);
 
-  const dht = new DHT({ nodes: knownPeers })
+  const dht = new DHT({ nodes: knownPeers });
 
-  console.log('=== hyperdht-explorer ===')
-  console.log('\nbootstrap nodes (configured):')
+  console.log('=== hyperdht-explorer ===');
+  console.log('\nbootstrap nodes (configured):');
   for (const node of DHT.BOOTSTRAP) {
-    console.log('  -', typeof node === 'string' ? node : `${node.host}:${node.port}`)
+    console.log(
+      '  -',
+      typeof node === 'string' ? node : `${node.host}:${node.port}`
+    );
   }
-  console.log(`\nseeding routing table with ${knownPeers.length} known peer(s) from nodes.db`)
-  console.log('\nbootstrapping...\n')
+  console.log(
+    `\nseeding routing table with ${knownPeers.length} known peer(s) from nodes.db`
+  );
+  console.log('\nbootstrapping...\n');
 
   dht.once('ready', () => {
-    console.log('ready. our node id:', hex(dht.id) || '<ephemeral>')
-    console.log('routing table seeded with', dht.toArray().length, 'node(s)\n')
-  })
+    console.log('ready. our node id:', hex(dht.id) || '<ephemeral>');
+    console.log('routing table seeded with', dht.toArray().length, 'node(s)\n');
+  });
 
   async function crawl() {
-    await dht.ready()
+    await dht.ready();
 
     if (arg) {
-      const target = b4a.from(arg, 'hex')
-      console.log('looking up announcers for topic:', arg, '\n')
+      const target = b4a.from(arg, 'hex');
+      console.log('looking up announcers for topic:', arg, '\n');
       for await (const data of dht.lookup(target)) {
-        record(data.from)
-        for (const p of data.peers || []) {
-          console.log(`  announcer: ${hex(p.publicKey)} via ${data.from.host}:${data.from.port}`)
+        record(data.from);
+        for (const peer of data.peers || []) {
+          console.log(
+            `  announcer: ${hex(peer.publicKey)} via ${data.from.host}:${data.from.port}`
+          );
         }
       }
-      console.log('\nlookup complete.')
-      return shutdown()
+      console.log('\nlookup complete.');
+      return shutdown();
     }
 
-    snapshotOnExit = true // record a metrics snapshot when this crawl ends
+    snapshotOnExit = true; // record a metrics snapshot when this crawl ends
 
     // Self-timed shutdown for bounded/scheduled runs.
     if (runForSeconds > 0) {
-      console.log(`(will stop after ~${runForSeconds}s)\n`)
-      globalThis.setTimeout(shutdown, runForSeconds * 1000)
+      console.log(`(will stop after ~${runForSeconds}s)\n`);
+      globalThis.setTimeout(shutdown, runForSeconds * 1000);
     }
-    if (maxQueries > 0) console.log(`(will stop after ${maxQueries} queries)\n`)
+    if (maxQueries > 0) {
+      console.log(`(will stop after ${maxQueries} queries)\n`);
+    }
 
     while (running) {
-      const target = randomTarget()
-      queries++
+      const target = randomTarget();
+      queries++;
       try {
-        for await (const m of dht.findNode(target)) {
-          record(m.from)
-          if (m.closerNodes) for (const n of m.closerNodes) record(n)
+        for await (const msg of dht.findNode(target)) {
+          recordResponse(msg);
         }
       } catch (err) {
-        if (running) console.error('query error:', err.message)
+        if (running) {
+          console.error('query error:', err.message);
+        }
       }
-      if (queries % 50 === 0) prune() // periodically drop nodes gone stale mid-run
+      if (queries % 50 === 0) {
+        prune();
+      } // periodically drop nodes gone stale mid-run
       if (queries % 10 === 0) {
-        const total = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n
+        const total = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n;
         console.log(
           `\n-- ${queries} queries | ${seenThisRun.size} nodes this run | ${total} known all-time --\n`
-        )
+        );
       }
-      if (maxQueries > 0 && queries >= maxQueries) return shutdown()
+      if (maxQueries > 0 && queries >= maxQueries) {
+        return shutdown();
+      }
     }
   }
 
   function summary() {
-    const total = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n
+    const total = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n;
     console.log(
       `\n=== summary: ${seenThisRun.size} nodes this run, ${total} known all-time, ${queries} queries ===`
-    )
-    console.log('\nmost stable peers (by sessions seen):')
+    );
+    console.log('\nmost stable peers (by sessions seen):');
     const rows = db
       .prepare(
         `
@@ -217,44 +261,58 @@ export async function run(ctx) {
     FROM nodes ORDER BY sessions DESC, seen_count DESC LIMIT 15
   `
       )
-      .all()
-    for (const r of rows) {
-      const lifespan = ago(r.first_seen)
+      .all();
+    for (const row of rows) {
+      const lifespan = ago(row.first_seen);
       console.log(
-        `  ${(r.host + ':' + r.port).padEnd(21)} sessions=${String(r.sessions).padStart(3)} hits=${String(r.seen_count).padStart(4)} known for ${lifespan}`
-      )
+        `  ${(row.host + ':' + row.port).padEnd(21)} sessions=${String(row.sessions).padStart(3)} hits=${String(row.seen_count).padStart(4)} known for ${lifespan}`
+      );
     }
   }
 
   // Record one metrics snapshot for the time-series view (timeline.mjs).
   function writeSnapshot() {
-    const total = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n
-    const alive = db.prepare('SELECT COUNT(*) AS n FROM nodes WHERE alive = 1').get().n
+    const total = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n;
+    const alive = db
+      .prepare('SELECT COUNT(*) AS n FROM nodes WHERE alive = 1')
+      .get().n;
     const seeders = db
       .prepare('SELECT COUNT(*) AS n FROM nodes WHERE app_seeder IS NOT NULL')
-      .get().n
-    const observed = db.prepare('SELECT COUNT(DISTINCT public_key) AS n FROM observations').get().n
+      .get().n;
+    const observed = db
+      .prepare('SELECT COUNT(DISTINCT public_key) AS n FROM observations')
+      .get().n;
     const rtts = db
-      .prepare('SELECT rtt_ms FROM nodes WHERE alive = 1 AND rtt_ms IS NOT NULL')
+      .prepare(
+        'SELECT rtt_ms FROM nodes WHERE alive = 1 AND rtt_ms IS NOT NULL'
+      )
       .all()
-      .map((r) => r.rtt_ms)
-      .sort((a, b) => a - b)
-    const medianRtt = rtts.length ? rtts[rtts.length >> 1] : null
+      .map((row) => row.rtt_ms)
+      .sort((a, b) => a - b);
+    const medianRtt = rtts.length ? rtts[rtts.length >> 1] : null;
 
     // distinct located countries / ASNs among current nodes (join by /24 in JS)
     const geo = new Map(
       db
-        .prepare("SELECT prefix, country, as_info FROM geo WHERE status = 'success'")
+        .prepare(
+          "SELECT prefix, country, as_info FROM geo WHERE status = 'success'"
+        )
         .all()
-        .map((g) => [g.prefix, g])
-    )
-    const countries = new Set()
-    const asns = new Set()
-    for (const { host } of db.prepare('SELECT DISTINCT host FROM nodes').all()) {
-      const g = geo.get(prefixOf(host))
-      if (g) {
-        if (g.country) countries.add(g.country)
-        if (g.as_info) asns.add(g.as_info)
+        .map((geoRow) => [geoRow.prefix, geoRow])
+    );
+    const countries = new Set();
+    const asns = new Set();
+    for (const { host } of db
+      .prepare('SELECT DISTINCT host FROM nodes')
+      .all()) {
+      const geoRow = geo.get(prefixOf(host));
+      if (geoRow) {
+        if (geoRow.country) {
+          countries.add(geoRow.country);
+        }
+        if (geoRow.as_info) {
+          asns.add(geoRow.as_info);
+        }
       }
     }
 
@@ -274,38 +332,40 @@ export async function run(ctx) {
       seeders,
       medianRtt,
       observed
-    )
+    );
     console.log(
       `snapshot: ${total} nodes, ${alive} alive, ${newThisRun} new, ${prunedThisRun} pruned, ${countries.size} countries, ${seeders} seeders, ${observed} observed`
-    )
+    );
   }
 
-  let running = true
-  let shuttingDown = false
-  let snapshotOnExit = false // lunte-disable-line prefer-const — reassigned inside nested crawl()
-  let resolveRun
+  let running = true;
+  let shuttingDown = false;
+  let snapshotOnExit = false; // lunte-disable-line prefer-const — reassigned inside nested crawl()
+  let resolveRun;
   const done = new Promise((resolve) => {
-    resolveRun = resolve
-  })
+    resolveRun = resolve;
+  });
   async function shutdown() {
-    if (shuttingDown) return
-    shuttingDown = true
-    running = false
-    summary()
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    running = false;
+    summary();
     if (snapshotOnExit) {
       try {
-        writeSnapshot()
+        writeSnapshot();
       } catch (err) {
-        console.error('snapshot failed:', err.message)
+        console.error('snapshot failed:', err.message);
       }
     }
     try {
-      await dht.destroy()
+      await dht.destroy();
     } catch {}
     try {
-      db.close()
+      db.close();
     } catch {}
-    resolveRun()
+    resolveRun();
   }
 
   // bin.mjs owns signal handling and invokes this via ctx.onShutdown, so SIGINT/
@@ -314,13 +374,13 @@ export async function run(ctx) {
   // vs plain `bare bin.mjs` — see CLAUDE.md); for a guaranteed clean stop under dev
   // prefer the --for / --queries options above. `teardown` is a safety net for any
   // runtime-driven teardown.
-  ctx.onShutdown?.(shutdown)
-  globalThis.Bare?.on?.('teardown', shutdown)
+  ctx.onShutdown?.(shutdown);
+  globalThis.Bare?.on?.('teardown', shutdown);
 
   crawl().catch((err) => {
-    console.error('fatal:', err)
-    shutdown()
-  })
+    console.error('fatal:', err);
+    shutdown();
+  });
 
-  await done
+  await done;
 }

@@ -1,5 +1,10 @@
+# Dependencies + generated build artifacts (gitignore-style; a bare name matches at any depth,
+# and only full-line `#` comments are supported — no trailing comments).
 node_modules
 package-lock.json
-# build output
+
+# Build output: bare-build standalone binaries.
 out/
+
+# Runtime logs written by the ops cron wrappers.
 scan.log

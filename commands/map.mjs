@@ -1,7 +1,7 @@
-import process from 'bare-process'
-import fs from 'bare-fs'
-import { openDb, prefixOf, hostKind } from '../db.mjs'
-import { htmlPath, ensureDirs } from '../paths.mjs'
+import process from 'bare-process';
+import fs from 'bare-fs';
+import { openDb, prefixOf, hostKind } from '../db.mjs';
+import { htmlPath, ensureDirs } from '../paths.mjs';
 
 // Render the discovered + geo-located nodes onto an interactive world map.
 // Produces a self-contained map.html (Leaflet from CDN, data embedded inline),
@@ -10,89 +10,105 @@ import { htmlPath, ensureDirs } from '../paths.mjs'
 // in (red = transient, green = long-lived / likely dedicated).
 
 export function run(ctx) {
-  const db = openDb()
+  const db = openDb();
 
   // geo rows keyed by /24 prefix (only successfully located networks)
-  const geo = new Map()
-  for (const g of db
+  const geo = new Map();
+  for (const geoRow of db
     .prepare("SELECT * FROM geo WHERE status = 'success' AND lat IS NOT NULL")
     .all()) {
-    geo.set(g.prefix, g)
+    geo.set(geoRow.prefix, geoRow);
   }
 
   // aggregate node stats per /24
-  const groups = new Map()
-  for (const n of db
+  const groups = new Map();
+  for (const node of db
     .prepare(
       'SELECT host, port, sessions, seen_count, first_seen, last_seen, alive, rtt_ms, app_seeder FROM nodes'
     )
     .all()) {
-    const prefix = prefixOf(n.host)
-    const g = geo.get(prefix)
-    if (!g) continue
-    let agg = groups.get(prefix)
+    const prefix = prefixOf(node.host);
+    const geoRow = geo.get(prefix);
+    if (!geoRow) {
+      continue;
+    }
+    let agg = groups.get(prefix);
     if (!agg) {
       agg = {
         prefix,
-        lat: g.lat,
-        lon: g.lon,
-        city: g.city,
-        country: g.country,
-        isp: g.isp,
-        org: g.org,
+        lat: geoRow.lat,
+        lon: geoRow.lon,
+        city: geoRow.city,
+        country: geoRow.country,
+        isp: geoRow.isp,
+        org: geoRow.org,
         nodes: 0,
         hits: 0,
         maxSessions: 0,
-        firstSeen: n.first_seen,
-        lastSeen: n.last_seen,
+        firstSeen: node.first_seen,
+        lastSeen: node.last_seen,
         aliveNodes: 0,
         probed: 0,
         minRtt: null,
         apps: new Set()
-      }
-      groups.set(prefix, agg)
+      };
+      groups.set(prefix, agg);
     }
-    agg.nodes++
-    agg.hits += n.seen_count
-    agg.maxSessions = Math.max(agg.maxSessions, n.sessions)
-    agg.firstSeen = Math.min(agg.firstSeen, n.first_seen)
-    agg.lastSeen = Math.max(agg.lastSeen, n.last_seen)
-    if (n.alive !== null) agg.probed++
-    if (n.alive === 1) {
-      agg.aliveNodes++
-      if (n.rtt_ms !== null) {
-        agg.minRtt = agg.minRtt === null ? n.rtt_ms : Math.min(agg.minRtt, n.rtt_ms)
+    agg.nodes++;
+    agg.hits += node.seen_count;
+    agg.maxSessions = Math.max(agg.maxSessions, node.sessions);
+    agg.firstSeen = Math.min(agg.firstSeen, node.first_seen);
+    agg.lastSeen = Math.max(agg.lastSeen, node.last_seen);
+    if (node.alive !== null) {
+      agg.probed++;
+    }
+    if (node.alive === 1) {
+      agg.aliveNodes++;
+      if (node.rtt_ms !== null) {
+        agg.minRtt =
+          agg.minRtt === null ? node.rtt_ms : Math.min(agg.minRtt, node.rtt_ms);
       }
     }
-    if (n.app_seeder) agg.apps.add(n.app_seeder)
+    if (node.app_seeder) {
+      agg.apps.add(node.app_seeder);
+    }
   }
 
   // Set -> sorted array so it serialises to JSON for the page.
-  const points = [...groups.values()].map((p) => ({ ...p, apps: [...p.apps].sort() }))
-  const totalNodes = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n
-  const located = points.reduce((s, p) => s + p.nodes, 0)
+  const points = [...groups.values()].map((group) => ({
+    ...group,
+    apps: [...group.apps].sort()
+  }));
+  const totalNodes = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n;
+  const located = points.reduce((sum, point) => sum + point.nodes, 0);
 
   // observed participants (observe.mjs) grouped by /24
-  const obs = new Map()
-  for (const o of db.prepare('SELECT host, app, public_key FROM observations').all()) {
-    const g = geo.get(prefixOf(o.host))
-    if (!g) continue
-    let a = obs.get(g.prefix)
+  const obs = new Map();
+  for (const obsRow of db
+    .prepare('SELECT host, app, public_key FROM observations')
+    .all()) {
+    const geoRow = geo.get(prefixOf(obsRow.host));
+    if (!geoRow) {
+      continue;
+    }
+    let a = obs.get(geoRow.prefix);
     if (!a) {
       a = {
-        prefix: g.prefix,
-        lat: g.lat,
-        lon: g.lon,
-        city: g.city,
-        country: g.country,
-        kind: hostKind(g),
+        prefix: geoRow.prefix,
+        lat: geoRow.lat,
+        lon: geoRow.lon,
+        city: geoRow.city,
+        country: geoRow.country,
+        kind: hostKind(geoRow),
         apps: new Set(),
         peers: new Set()
-      }
-      obs.set(g.prefix, a)
+      };
+      obs.set(geoRow.prefix, a);
     }
-    if (o.app) a.apps.add(o.app)
-    a.peers.add(o.public_key)
+    if (obsRow.app) {
+      a.apps.add(obsRow.app);
+    }
+    a.peers.add(obsRow.public_key);
   }
   const observed = [...obs.values()].map((a) => ({
     prefix: a.prefix,
@@ -103,18 +119,20 @@ export function run(ctx) {
     kind: a.kind,
     apps: [...a.apps].sort(),
     peers: a.peers.size
-  }))
+  }));
 
   // observed participants aggregated to one bubble per country — placed at the mean
   // lat/lon of that country's observed /24s (no external boundary data needed), sized
   // by distinct participants, coloured by dominant host-type. The overview layer that
   // keeps the map readable as /24s accumulate; the per-/24 dots remain as a detail layer.
-  const oc = new Map()
+  const oc = new Map();
   for (const a of obs.values()) {
-    if (!a.country) continue
-    let c = oc.get(a.country)
-    if (!c) {
-      c = {
+    if (!a.country) {
+      continue;
+    }
+    let countryAgg = oc.get(a.country);
+    if (!countryAgg) {
+      countryAgg = {
         country: a.country,
         latSum: 0,
         lonSum: 0,
@@ -122,29 +140,35 @@ export function run(ctx) {
         peers: new Set(),
         kinds: {},
         apps: new Set()
-      }
-      oc.set(a.country, c)
+      };
+      oc.set(a.country, countryAgg);
     }
-    c.latSum += a.lat
-    c.lonSum += a.lon
-    c.nets++
-    for (const pk of a.peers) c.peers.add(pk)
-    c.kinds[a.kind] = (c.kinds[a.kind] || 0) + a.peers.size
-    for (const app of a.apps) c.apps.add(app)
+    countryAgg.latSum += a.lat;
+    countryAgg.lonSum += a.lon;
+    countryAgg.nets++;
+    for (const pk of a.peers) {
+      countryAgg.peers.add(pk);
+    }
+    countryAgg.kinds[a.kind] = (countryAgg.kinds[a.kind] || 0) + a.peers.size;
+    for (const app of a.apps) {
+      countryAgg.apps.add(app);
+    }
   }
-  const observedCountries = [...oc.values()].map((c) => ({
-    country: c.country,
-    lat: c.latSum / c.nets,
-    lon: c.lonSum / c.nets,
-    nets: c.nets,
-    peers: c.peers.size,
-    kind: Object.entries(c.kinds).sort((a, b) => b[1] - a[1])[0]?.[0] || 'unknown',
-    apps: [...c.apps].sort()
-  }))
+  const observedCountries = [...oc.values()].map((countryAgg) => ({
+    country: countryAgg.country,
+    lat: countryAgg.latSum / countryAgg.nets,
+    lon: countryAgg.lonSum / countryAgg.nets,
+    nets: countryAgg.nets,
+    peers: countryAgg.peers.size,
+    kind:
+      Object.entries(countryAgg.kinds).sort((a, b) => b[1] - a[1])[0]?.[0] ||
+      'unknown',
+    apps: [...countryAgg.apps].sort()
+  }));
 
   console.log(
     `map: ${points.length} networks, ${located}/${totalNodes} nodes located, ${observed.length} observed-peer network(s) across ${observedCountries.length} country(ies)`
-  )
+  );
 
   const html = `<!DOCTYPE html>
 <html>
@@ -304,12 +328,12 @@ export function run(ctx) {
   </script>
 </body>
 </html>
-`
+`;
 
-  ensureDirs()
-  const out = htmlPath('map.html')
-  fs.writeFileSync(out, html)
-  console.log(`map: wrote map.html (${points.length} markers)`)
-  console.log(`open it in a browser:  file://${out}`)
-  db.close()
+  ensureDirs();
+  const out = htmlPath('map.html');
+  fs.writeFileSync(out, html);
+  console.log(`map: wrote map.html (${points.length} markers)`);
+  console.log(`open it in a browser:  file://${out}`);
+  db.close();
 }

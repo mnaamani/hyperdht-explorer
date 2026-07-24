@@ -1,9 +1,9 @@
-import DHT from 'hyperdht'
-import b4a from 'b4a'
-import crypto from 'hypercore-crypto'
-import idEnc from 'hypercore-id-encoding'
-import process from 'bare-process'
-import { openDb, APP_PRESETS, resolvePreset } from '../db.mjs'
+import DHT from 'hyperdht';
+import b4a from 'b4a';
+import crypto from 'hypercore-crypto';
+import idEnc from 'hypercore-id-encoding';
+import process from 'bare-process';
+import { openDb, APP_PRESETS, resolvePreset } from '../db.mjs';
 
 // Find peers seeding a specific Pear application (or any Hypercore), given its
 // pear:// link or public key. This works because app distribution is public by
@@ -27,32 +27,34 @@ import { openDb, APP_PRESETS, resolvePreset } from '../db.mjs'
 // (APP_PRESETS) so `observe` shares them; only add one with a verified link.
 
 export async function run(ctx) {
-  const argv = ctx.argv
+  const argv = ctx.argv;
   // A bare preset name (e.g. `seeders keet`) expands to its link and supplies the
   // default tag; a pear:// link or raw key passes through unchanged.
-  const { link: arg, name: presetName } = resolvePreset(argv[2])
-  const appName = argv[3] || presetName || 'app'
+  const { link: arg, name: presetName } = resolvePreset(argv[2]);
+  const appName = argv[3] || presetName || 'app';
   if (!arg) {
-    console.error('usage: bare bin.mjs seeders <pear://link | hypercore-key | preset> [app-name]')
-    console.error(`presets: ${Object.keys(APP_PRESETS).join(', ')}`)
-    process.exit(1)
+    console.error(
+      'usage: bare bin.mjs seeders <pear://link | hypercore-key | preset> [app-name]'
+    );
+    console.error(`presets: ${Object.keys(APP_PRESETS).join(', ')}`);
+    process.exit(1);
   }
 
-  let publicKey
+  let publicKey;
   try {
-    publicKey = idEnc.decode(arg) // handles pear://, z-base-32 (52), and hex (64)
+    publicKey = idEnc.decode(arg); // handles pear://, z-base-32 (52), and hex (64)
   } catch (err) {
-    console.error('could not decode key:', err.message)
-    process.exit(1)
+    console.error('could not decode key:', err.message);
+    process.exit(1);
   }
 
-  const discoveryKey = crypto.discoveryKey(publicKey)
+  const discoveryKey = crypto.discoveryKey(publicKey);
 
-  console.log('app public key :', b4a.toString(publicKey, 'hex'))
-  console.log('discovery key  :', b4a.toString(discoveryKey, 'hex'))
-  console.log('\nlooking up seeders...\n')
+  console.log('app public key :', b4a.toString(publicKey, 'hex'));
+  console.log('discovery key  :', b4a.toString(discoveryKey, 'hex'));
+  console.log('\nlooking up seeders...\n');
 
-  const db = openDb()
+  const db = openDb();
   // Record a relay endpoint as a discovered node and tag it as an app seeder.
   const stmtSeeder = db.prepare(`
   INSERT INTO nodes (host, port, first_seen, last_seen, seen_count, sessions, app_seeder)
@@ -61,49 +63,57 @@ export async function run(ctx) {
     last_seen  = excluded.last_seen,
     seen_count = nodes.seen_count + 1,
     app_seeder = excluded.app_seeder
-`)
+`);
 
-  const dht = new DHT()
-  await dht.ready()
+  const dht = new DHT();
+  await dht.ready();
 
-  const seeders = new Map() // announcer publicKey hex -> { relays:Set }
-  const relayAddrs = new Set() // unique host:port across all seeders
-  let respondingNodes = 0
+  const seeders = new Map(); // announcer publicKey hex -> { relays:Set }
+  const relayAddrs = new Set(); // unique host:port across all seeders
+  let respondingNodes = 0;
 
   for await (const data of dht.lookup(discoveryKey)) {
-    respondingNodes++
+    respondingNodes++;
     for (const peer of data.peers || []) {
-      const pk = b4a.toString(peer.publicKey, 'hex')
-      let entry = seeders.get(pk)
+      const pk = b4a.toString(peer.publicKey, 'hex');
+      let entry = seeders.get(pk);
       if (!entry) {
-        entry = { relays: new Set() }
-        seeders.set(pk, entry)
-        console.log(`+ seeder ${pk}`)
+        entry = { relays: new Set() };
+        seeders.set(pk, entry);
+        console.log(`+ seeder ${pk}`);
       }
-      for (const r of peer.relayAddresses || []) {
-        entry.relays.add(`${r.host}:${r.port}`)
-        relayAddrs.add(`${r.host}:${r.port}`)
+      for (const relay of peer.relayAddresses || []) {
+        entry.relays.add(`${relay.host}:${relay.port}`);
+        relayAddrs.add(`${relay.host}:${relay.port}`);
       }
     }
   }
 
   // Persist the relay endpoints, tagged with the app name.
-  const now = Date.now()
+  const now = Date.now();
   for (const addr of relayAddrs) {
-    const idx = addr.lastIndexOf(':')
-    stmtSeeder.run(addr.slice(0, idx), Number(addr.slice(idx + 1)), now, now, appName)
+    const idx = addr.lastIndexOf(':');
+    stmtSeeder.run(
+      addr.slice(0, idx),
+      Number(addr.slice(idx + 1)),
+      now,
+      now,
+      appName
+    );
   }
 
   console.log(
     `\n=== ${seeders.size} seeder(s) found across ${respondingNodes} responding node(s) ===`
-  )
+  );
   for (const [pk, { relays }] of seeders) {
-    console.log(`  ${pk}${relays.size ? '  relays: ' + [...relays].join(', ') : ''}`)
+    console.log(
+      `  ${pk}${relays.size ? '  relays: ' + [...relays].join(', ') : ''}`
+    );
   }
   console.log(
     `\nrecorded ${relayAddrs.size} relay endpoint(s) into nodes.db tagged app_seeder='${appName}'`
-  )
+  );
 
-  db.close()
-  await dht.destroy()
+  db.close();
+  await dht.destroy();
 }

@@ -10,8 +10,8 @@
   "upgrade": "pear://zn3orhc8fe1qoo48edpu1x8e6of9ufbxg7ixjinigcbfgurgnnny",
   "scripts": {
     "start": "bare bin.mjs",
-    "format": "prettier . --write",
-    "lint": "prettier . --check && lunte",
+    "format": "prettier . --write && lunte --fix",
+    "lint": "prettier . --check && lunte && eslint .",
     "make": "node scripts/make.js",
     "make:darwin-arm64": "bare-build --name hyperdht-explorer --standalone --host darwin-arm64 --out ./out/darwin-arm64 bin.mjs",
     "make:darwin-x64": "bare-build --name hyperdht-explorer --standalone --host darwin-x64 --out ./out/darwin-x64 bin.mjs",
@@ -44,6 +44,7 @@
   "devDependencies": {
     "bare-build": "^1.0.1",
     "brittle": "^4.0.2",
+    "eslint": "^10.6.0",
     "lunte": "^1.8.2",
     "prettier": "^3.8.5",
     "prettier-config-holepunch": "^2.0.0"

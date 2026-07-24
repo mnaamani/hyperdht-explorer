@@ -1,10 +1,10 @@
 #!/usr/bin/env bare
-import os from 'bare-os'
-import path from 'bare-path'
-import process from 'bare-process'
-import pkg from './package.json'
-import { dataDir } from './paths.mjs'
-import App from './app.cjs'
+import os from 'bare-os';
+import path from 'bare-path';
+import process from 'bare-process';
+import pkg from './package.json';
+import { dataDir } from './paths.mjs';
+import App from './app.cjs';
 
 // hyperdht-explorer CLI entrypoint — a pear-runtime standalone Bare app.
 //
@@ -31,7 +31,7 @@ const COMMANDS = {
   storeprobe: () => import('./commands/storeprobe.mjs'),
   paths: () => import('./commands/paths.mjs'),
   stats: () => import('./commands/stats.mjs')
-}
+};
 
 const HELP = `hyperdht-explorer v${pkg.version} — hyperdht network-health explorer
 
@@ -58,47 +58,57 @@ global flags:
   --updates         enable the pear-runtime OTA self-updater (default: off)
   --no-updates      explicitly disable the updater
 
-data directory: ${dataDir()}`
+data directory: ${dataDir()}`;
 
 // Dev runs as `bare bin.mjs <cmd>` (argv = [bare, script, ...args]); a standalone
 // build runs as `<binary> <cmd>` (argv = [binary, ...args]) with no script slot.
 // Strip the runtime + (dev-only) script path so `raw` starts at the user's args.
-const isDev = path.basename(Bare.argv[0]) === 'bare'
+const isDev = path.basename(Bare.argv[0]) === 'bare';
 
 // --- parse: strip global flags from anywhere; first remaining token = command --
-const raw = Bare.argv.slice(isDev ? 2 : 1)
-let updates = false
-let storage = null
-const rest = []
+const raw = Bare.argv.slice(isDev ? 2 : 1);
+let updates = false;
+let storage = null;
+const rest = [];
 for (let i = 0; i < raw.length; i++) {
-  const a = raw[i]
-  if (a === '--no-updates') updates = false
-  else if (a === '--updates') updates = true
-  else if (a === '--storage') storage = raw[++i]
-  else rest.push(a)
+  const a = raw[i];
+  if (a === '--no-updates') {
+    updates = false;
+  } else if (a === '--updates') {
+    updates = true;
+  } else if (a === '--storage') {
+    storage = raw[++i];
+  } else {
+    rest.push(a);
+  }
 }
 
-const cmdName = rest[0]
-if (!cmdName || cmdName === 'help' || cmdName === '--help' || cmdName === '-h') {
-  console.log(HELP)
-  Bare.exit(cmdName ? 0 : 1)
+const cmdName = rest[0];
+if (
+  !cmdName ||
+  cmdName === 'help' ||
+  cmdName === '--help' ||
+  cmdName === '-h'
+) {
+  console.log(HELP);
+  Bare.exit(cmdName ? 0 : 1);
 }
 if (!COMMANDS[cmdName]) {
-  console.error(`unknown command: ${cmdName}\n`)
-  console.log(HELP)
-  Bare.exit(1)
+  console.error(`unknown command: ${cmdName}\n`);
+  console.log(HELP);
+  Bare.exit(1);
 }
 
 // Resolve the data dir once and expose it to commands (paths.mjs reads this env).
-const dir = storage || dataDir()
-process.env.HYPERDHT_EXPLORER_HOME = dir
+const dir = storage || dataDir();
+process.env.HYPERDHT_EXPLORER_HOME = dir;
 
 console.log(
   `hyperdht-explorer v${pkg.version}  ·  data: ${dir}  ·  updates: ${updates ? 'on' : 'off'}\n`
-)
+);
 
 // --- optional OTA updater (best-effort; never blocks the command) -------------
-let app = null
+let app = null;
 if (updates) {
   try {
     app = new App({
@@ -108,14 +118,16 @@ if (updates) {
       version: pkg.version,
       upgrade: pkg.upgrade,
       name: 'hyperdht-explorer'
-    })
-    app.on('error', (err) => console.error('[updater]', err?.message || err))
-    app.on('updating', () => console.log('[updater] downloading update…'))
-    app.on('updated', () => console.log('[updater] update ready; applies on next start'))
-    await app.ready()
+    });
+    app.on('error', (err) => console.error('[updater]', err?.message || err));
+    app.on('updating', () => console.log('[updater] downloading update…'));
+    app.on('updated', () =>
+      console.log('[updater] update ready; applies on next start')
+    );
+    await app.ready();
   } catch (err) {
-    console.error('[updater] disabled (failed to start):', err?.message || err)
-    app = null
+    console.error('[updater] disabled (failed to start):', err?.message || err);
+    app = null;
   }
 }
 
@@ -130,47 +142,51 @@ if (updates) {
 // running command to wind down (commands register a callback via ctx.onShutdown —
 // e.g. scan prints its summary + writes a snapshot), tear down the updater, then
 // exit with the conventional 128+signal code.
-const shutdownHooks = []
-let signalled = 0
+const shutdownHooks = [];
+let signalled = 0;
 async function onSignal(code) {
-  if (signalled) return // ignore repeats once we're already winding down
-  signalled = code
+  if (signalled) {
+    return;
+  } // ignore repeats once we're already winding down
+  signalled = code;
   try {
-    for (const fn of shutdownHooks) await fn()
+    for (const fn of shutdownHooks) {
+      await fn();
+    }
   } catch {}
   if (app) {
     try {
-      await app.close()
+      await app.close();
     } catch {}
   }
-  Bare.exit(code)
+  Bare.exit(code);
 }
-process.on('SIGHUP', () => onSignal(129))
-process.on('SIGINT', () => onSignal(130))
-process.on('SIGQUIT', () => onSignal(131))
-process.on('SIGTERM', () => onSignal(143))
+process.on('SIGHUP', () => onSignal(129));
+process.on('SIGINT', () => onSignal(130));
+process.on('SIGQUIT', () => onSignal(131));
+process.on('SIGTERM', () => onSignal(143));
 
 // --- dispatch -----------------------------------------------------------------
-let code = 0
+let code = 0;
 try {
-  const mod = await COMMANDS[cmdName]()
+  const mod = await COMMANDS[cmdName]();
   // Synthetic argv preserves each command's existing argv[2..] parsing verbatim.
   // ctx.onShutdown lets a command register a graceful-stop callback for signals.
   const ctx = {
     argv: [Bare.argv[0], cmdName, ...rest.slice(1)],
     dir,
     onShutdown: (fn) => shutdownHooks.push(fn)
-  }
-  await mod.run(ctx)
+  };
+  await mod.run(ctx);
 } catch (err) {
-  console.error('error:', err?.stack || err)
-  code = 1
+  console.error('error:', err?.stack || err);
+  code = 1;
 } finally {
   if (app) {
     try {
-      await app.close()
+      await app.close();
     } catch {}
   }
 }
 
-Bare.exit(signalled || code)
+Bare.exit(signalled || code);

@@ -1,7 +1,7 @@
-import path from 'bare-path'
-import fs from 'bare-fs'
-import process from 'bare-process'
-import { persistent } from 'bare-storage'
+import path from 'bare-path';
+import fs from 'bare-fs';
+import process from 'bare-process';
+import { persistent } from 'bare-storage';
 
 // Resolve where hyperdht-explorer keeps its runtime state — OUTSIDE the repo. The DB
 // and the generated HTML pages all live here, alongside the pear-runtime updater
@@ -21,35 +21,37 @@ import { persistent } from 'bare-storage'
 // should use that instead. These helpers are the default/fallback resolution and
 // the single source of truth for the on-disk layout.
 
-const APP = 'hyperdht-explorer'
+const APP = 'hyperdht-explorer';
 
 // Same dev/prod discriminator bin.mjs uses: dev runs go through the `bare` runtime
 // (argv[0] === 'bare'); a standalone build's argv[0] is the binary itself.
 function isDev() {
-  return path.basename(Bare.argv[0]) === 'bare'
+  return path.basename(Bare.argv[0]) === 'bare';
 }
 
 export function dataDir() {
-  const override = process.env?.HYPERDHT_EXPLORER_HOME
-  if (override) return override
-  return path.join(persistent(), isDev() ? `${APP}-dev` : APP)
+  const override = process.env?.HYPERDHT_EXPLORER_HOME;
+  if (override) {
+    return override;
+  }
+  return path.join(persistent(), isDev() ? `${APP}-dev` : APP);
 }
 
 export function dbPath() {
-  return path.join(dataDir(), 'nodes.db')
+  return path.join(dataDir(), 'nodes.db');
 }
 
 export function publicDir() {
-  return path.join(dataDir(), 'public')
+  return path.join(dataDir(), 'public');
 }
 
 // Absolute path for a generated page, e.g. htmlPath('map.html').
 export function htmlPath(file) {
-  return path.join(publicDir(), file)
+  return path.join(publicDir(), file);
 }
 
 // Create the data + public directories if they don't exist yet. Cheap and
 // idempotent — call before writing the DB or any HTML.
 export function ensureDirs() {
-  fs.mkdirSync(publicDir(), { recursive: true }) // recursive also creates dataDir()
+  fs.mkdirSync(publicDir(), { recursive: true }); // recursive also creates dataDir()
 }

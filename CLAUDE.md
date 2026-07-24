@@ -222,3 +222,62 @@ cycle exit cleanly and write its snapshot.
 - Be honest in output about limitations (relay vs. client addresses, wall-clock
   RTT including local latency, seeders ≠ all installs). Existing code says so;
   keep that tone.
+
+## Code Style (beyond prettier/lunte — apply to all new and edited code)
+
+Enforcement is wired into `npm run lint` (`prettier . --check && lunte && eslint .`)
+and `npm run format` (`prettier . --write && lunte --fix`). Prettier owns
+formatting (`.prettierrc.js` overrides holepunch's `semi: false`/`printWidth: 100`
+with `semi: true`/`printWidth: 80`); lunte owns correctness; `eslint.config.js`
+backs the house-style rules prettier and lunte can't check (no recommended preset).
+
+- **Always brace `if`/`else`/`for`/`while` bodies** — no brace-less single-statement
+  bodies, even one-liners. (eslint `curly`)
+- **No single-letter / cryptic variable names** (`s`, `f`, `r`, `t`, `pt`, `it`, `k`…).
+  Use descriptive names. Acceptable idioms: loop index `i`/`j`, geometry locals
+  (`dx`/`dy`/`x`/`y`), `ctx`, `ev`/`evt` (events). (eslint `id-length`, min 2, with
+  the sanctioned 1-char exceptions; SQL-column / geo-field property names are exempt)
+- **Avoid `switch` statements where possible** — prefer a lookup table (object keyed
+  by case → value or handler function).
+- **Avoid deeply nested `if`/`else`** — prefer early returns / guard clauses; extract
+  a helper when branching gets deep. Same spirit applies to nested ternaries. (eslint
+  `no-nested-ternary`, `max-depth` 4)
+- **One statement per line** — never `a; b` on one line or comma-operator statement
+  chaining. (eslint `no-sequences`)
+- **Always use semicolons** — enforced by prettier (`.prettierrc.js` `semi: true`).
+- **80-character line limit** — enforced by prettier (`.prettierrc.js` `printWidth: 80`).
+- **At most two chained calls per line** — `funcA().funcB()` is fine;
+  `funcA().funcB().funcC()` is not. For 3+ calls, each call goes on its own indented
+  line under the receiver. Caveat: prettier only breaks a chain that exceeds 80 chars
+  and collapses a manually-broken short chain back onto one line, so for a 3+ chain
+  that fits in 80 chars, split it with an intermediate variable instead. Not
+  prettier-enforceable; apply by convention.
+- **Always strict equality** — `===`/`!==`, never `==`/`!=`. (eslint `eqeqeq`)
+- **Declare all variables at the top of their scope** — module state/config consts at
+  the top of the module, function locals at the top of the function (guard clauses may
+  precede them). Function definitions are not "variables" and live in their sections.
+- **Never `setInterval`** — use a self-rescheduling `setTimeout`: the callback does its
+  work, then re-arms itself (`timer = setTimeout(tick, ms)`) as its **last** step. Ticks
+  can never overlap/stack, a slow or async tick delays the next instead of racing it,
+  and each tick can decide not to continue. Clear with `clearTimeout`; the handle changes
+  every tick, so keep it in a `let` and re-check it after async work before re-arming.
+  (eslint `no-restricted-globals` bans `setInterval`/`clearInterval`)
+- **Google TypeScript Style Guide** (https://google.github.io/styleguide/tsguide.html)
+  is the baseline for anything not covered above, where it applies to plain JS and
+  doesn't conflict with this list or the prettier config. Notably: named exports only
+  (no `export default` — enforced on `.mjs` via eslint `no-restricted-syntax`),
+  `const`/`let` never `var` (eslint `no-var`), `CONSTANT_CASE` for module-level
+  constants, `camelCase`/`PascalCase` otherwise, prefer `for…of`.
+- **No functions with more than 3 positional parameters** — take a single destructured
+  options object instead. The real hazard is adjacent same-typed args (host/port/hex
+  strings especially) silently transposed at a call site, so prefer the object form even
+  at 2–3 args when the types are interchangeable. Advisory (not eslint-enforced).
+  Exemption: geometry draw helpers (`commands/ring.mjs`/`commands/map.mjs`), where
+  positional `(x, y, r, …)` is the universal idiom.
+- **No pass-through `return func()` unless the return value is meant** — only write
+  `return func()` when the caller's contract is to return `func()`'s value/type. If the
+  call is done just for its effect, call it on its own line and `return;` separately, so
+  the function doesn't leak a return value it never promised.
+- **Class private members use `#`, not `_`** — real ES private fields/methods, enforced
+  by the language rather than convention. (An `_` prefix remains fine for its other job:
+  marking deliberately-unused parameters, e.g. `(_evt, url) =>`.)

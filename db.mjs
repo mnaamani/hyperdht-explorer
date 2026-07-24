@@ -1,5 +1,5 @@
-import { DatabaseSync } from 'bare-sqlite'
-import { dbPath, ensureDirs } from './paths.mjs'
+import { DatabaseSync } from 'bare-sqlite';
+import { dbPath, ensureDirs } from './paths.mjs';
 
 // Shared database access for the hyperdht-explorer tools (crawler, geo, map).
 //
@@ -11,9 +11,9 @@ import { dbPath, ensureDirs } from './paths.mjs'
 //           /24. This caps API usage hard and respects ip-api.com rate limits.
 
 export function openDb(path = dbPath()) {
-  ensureDirs() // make sure the app-data dir exists before SQLite touches it
-  const db = new DatabaseSync(path, { timeout: 5000 })
-  db.exec('PRAGMA journal_mode = WAL;')
+  ensureDirs(); // make sure the app-data dir exists before SQLite touches it
+  const db = new DatabaseSync(path, { timeout: 5000 });
+  db.exec('PRAGMA journal_mode = WAL;');
   db.exec(`
     CREATE TABLE IF NOT EXISTS nodes (
       host       TEXT    NOT NULL,
@@ -110,47 +110,59 @@ export function openDb(path = dbPath()) {
       delay_s          INTEGER,   -- final re-check offset (seconds) — spans the record TTL
       decay            TEXT       -- JSON [{m, replicas}] decay curve across checkpoints
     );
-  `)
+  `);
 
   // Migrate older databases that predate the ping-probe columns.
   const cols = new Set(
     db
       .prepare('PRAGMA table_info(nodes)')
       .all()
-      .map((c) => c.name)
-  )
-  if (!cols.has('alive')) db.exec('ALTER TABLE nodes ADD COLUMN alive INTEGER')
-  if (!cols.has('rtt_ms')) db.exec('ALTER TABLE nodes ADD COLUMN rtt_ms INTEGER')
-  if (!cols.has('last_ping')) db.exec('ALTER TABLE nodes ADD COLUMN last_ping INTEGER')
-  if (!cols.has('app_seeder')) db.exec('ALTER TABLE nodes ADD COLUMN app_seeder TEXT')
+      .map((col) => col.name)
+  );
+  if (!cols.has('alive')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN alive INTEGER');
+  }
+  if (!cols.has('rtt_ms')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN rtt_ms INTEGER');
+  }
+  if (!cols.has('last_ping')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN last_ping INTEGER');
+  }
+  if (!cols.has('app_seeder')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN app_seeder TEXT');
+  }
   const spCols = new Set(
     db
       .prepare('PRAGMA table_info(store_probes)')
       .all()
-      .map((c) => c.name)
-  )
-  if (spCols.size && !spCols.has('decay')) db.exec('ALTER TABLE store_probes ADD COLUMN decay TEXT')
+      .map((col) => col.name)
+  );
+  if (spCols.size && !spCols.has('decay')) {
+    db.exec('ALTER TABLE store_probes ADD COLUMN decay TEXT');
+  }
   const geoCols = new Set(
     db
       .prepare('PRAGMA table_info(geo)')
       .all()
-      .map((c) => c.name)
-  )
+      .map((col) => col.name)
+  );
   for (const col of ['mobile', 'proxy', 'hosting']) {
-    if (geoCols.size && !geoCols.has(col)) db.exec(`ALTER TABLE geo ADD COLUMN ${col} INTEGER`)
+    if (geoCols.size && !geoCols.has(col)) {
+      db.exec(`ALTER TABLE geo ADD COLUMN ${col} INTEGER`);
+    }
   }
   if (
     !new Set(
       db
         .prepare('PRAGMA table_info(snapshots)')
         .all()
-        .map((c) => c.name)
+        .map((col) => col.name)
     ).has('observed')
   ) {
-    db.exec('ALTER TABLE snapshots ADD COLUMN observed INTEGER')
+    db.exec('ALTER TABLE snapshots ADD COLUMN observed INTEGER');
   }
 
-  return db
+  return db;
 }
 
 // Well-known PUBLIC Pear apps, referenceable by name (instead of a full pear://
@@ -161,75 +173,104 @@ export const APP_PRESETS = {
   keet: 'pear://17pwkcszz18deaccarhrrixhzf1f5ko1b1dz6j3pxhexebutjwzy',
   // PearPass — password manager Pear app.
   pearpass: 'pear://dbkezmhetxwo95ab1kcojfraw1eryzf7kex5cahykf6b9c3amd6o'
-}
+};
 
 // Resolve a positional arg to { link, name }: a bare preset name (e.g. 'keet')
 // expands to its link and offers the preset name as the default tag; anything
 // else (a pear:// link or raw key) passes through with no default tag.
 export function resolvePreset(arg) {
-  const preset = arg && APP_PRESETS[arg.toLowerCase()]
-  if (preset) return { link: preset, name: arg.toLowerCase() }
-  return { link: arg, name: null }
+  const preset = arg && APP_PRESETS[arg.toLowerCase()];
+  if (preset) {
+    return { link: preset, name: arg.toLowerCase() };
+  }
+  return { link: arg, name: null };
 }
 
 // True for private / reserved / non-routable IPv4 (RFC1918, loopback, link-local,
 // CGNAT, multicast, reserved). Non-IPv4 strings are treated as not-private.
 export function isPrivateIp(host) {
-  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(String(host))
-  if (!m) return false
-  const a = Number(m[1])
-  const b = Number(m[2])
-  if (a === 0 || a === 10 || a === 127) return true // this-net, 10/8, loopback
-  if (a === 172 && b >= 16 && b <= 31) return true // 172.16.0.0/12
-  if (a === 192 && b === 168) return true // 192.168.0.0/16
-  if (a === 169 && b === 254) return true // link-local
-  if (a === 100 && b >= 64 && b <= 127) return true // CGNAT 100.64.0.0/10
-  if (a >= 224) return true // multicast / reserved / broadcast
-  return false
+  const match = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(String(host));
+  if (!match) {
+    return false;
+  }
+  const a = Number(match[1]);
+  const b = Number(match[2]);
+  if (a === 0 || a === 10 || a === 127) {
+    return true;
+  } // this-net, 10/8, loopback
+  if (a === 172 && b >= 16 && b <= 31) {
+    return true;
+  } // 172.16.0.0/12
+  if (a === 192 && b === 168) {
+    return true;
+  } // 192.168.0.0/16
+  if (a === 169 && b === 254) {
+    return true;
+  } // link-local
+  if (a === 100 && b >= 64 && b <= 127) {
+    return true;
+  } // CGNAT 100.64.0.0/10
+  if (a >= 224) {
+    return true;
+  } // multicast / reserved / broadcast
+  return false;
 }
 
 // Classify a network by ip-api flags: datacenter / mobile / proxy / residential.
 // "residential" = located but flagged as none of the above (eyeball/business ISP),
 // a useful proxy for "likely an end-user's machine rather than infrastructure".
-export function hostKind(g) {
-  if (!g) return 'unknown'
-  if (g.hosting) return 'datacenter'
-  if (g.mobile) return 'mobile'
-  if (g.proxy) return 'proxy'
-  if (g.country) return 'residential'
-  return 'unknown'
+export function hostKind(geoRow) {
+  if (!geoRow) {
+    return 'unknown';
+  }
+  if (geoRow.hosting) {
+    return 'datacenter';
+  }
+  if (geoRow.mobile) {
+    return 'mobile';
+  }
+  if (geoRow.proxy) {
+    return 'proxy';
+  }
+  if (geoRow.country) {
+    return 'residential';
+  }
+  return 'unknown';
 }
 
 // IPv4 /24 network key. Non-IPv4 hosts fall back to the host itself so they
 // still get looked up individually rather than being silently merged.
 export function prefixOf(host) {
-  const parts = String(host).split('.')
-  if (parts.length === 4 && parts.every((p) => p !== '' && Number.isInteger(+p))) {
-    return parts.slice(0, 3).join('.')
+  const parts = String(host).split('.');
+  if (
+    parts.length === 4 &&
+    parts.every((part) => part !== '' && Number.isInteger(+part))
+  ) {
+    return parts.slice(0, 3).join('.');
   }
-  return host
+  return host;
 }
 
 // Registry holder/AS names sometimes carry stray double quotes (e.g.
 // `JSC "ER-Telecom Holding"`) which are just noise — strip them and tidy spacing
 // so display names render cleanly everywhere.
-export function cleanName(s) {
-  return s ? s.replace(/"/g, '').replace(/\s+/g, ' ').trim() : s
+export function cleanName(str) {
+  return str ? str.replace(/"/g, '').replace(/\s+/g, ' ').trim() : str;
 }
 
 // ip-api's `as` field looks like "AS24940 Hetzner Online GmbH" — split the AS
 // number from the operator name. Falls back to org/isp when there's no AS string.
 export function parseAs(asInfo, org, isp) {
   if (asInfo) {
-    const m = /^AS(\d+)\s*(.*)$/i.exec(asInfo.trim())
-    if (m) {
+    const match = /^AS(\d+)\s*(.*)$/i.exec(asInfo.trim());
+    if (match) {
       return {
-        asn: 'AS' + m[1],
-        asnNum: Number(m[1]),
-        name: cleanName(m[2] || org || isp || '') || 'AS' + m[1]
-      }
+        asn: 'AS' + match[1],
+        asnNum: Number(match[1]),
+        name: cleanName(match[2] || org || isp || '') || 'AS' + match[1]
+      };
     }
-    return { asn: null, asnNum: null, name: cleanName(asInfo) }
+    return { asn: null, asnNum: null, name: cleanName(asInfo) };
   }
-  return { asn: null, asnNum: null, name: cleanName(org || isp || null) }
+  return { asn: null, asnNum: null, name: cleanName(org || isp || null) };
 }
