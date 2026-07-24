@@ -26,6 +26,7 @@ const COMMANDS = {
   rpki: () => import('./commands/rpki.mjs'),
   storeprobe: () => import('./commands/storeprobe.mjs'),
   // render: emit a self-contained .html report from already-collected data
+  'render:index': () => import('./commands/index.mjs'),
   'render:map': () => import('./commands/map.mjs'),
   'render:ring': () => import('./commands/ring.mjs'),
   'render:timeline': () => import('./commands/timeline.mjs'),
@@ -52,6 +53,7 @@ commands:
     storeprobe       storage-reliability decay probe   (--canaries N --checkpoints …)
 
   render — emit a self-contained .html report from collected data:
+    render:index     index.html (landing page linking the reports)
     render:map       map.html (Leaflet world map)
     render:ring      ring.html (keyspace projection)
     render:timeline  timeline.html (time series)
