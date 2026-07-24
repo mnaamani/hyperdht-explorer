@@ -104,10 +104,10 @@ one thing to verify when first cutting a binary.
 - `commands/probe.mjs` (`probe`) — `dht.ping` for liveness + RTT.
 - `commands/seeders.mjs` (`seeders`) — `pear://`/key → discovery key → `dht.lookup` →
   tag announcer relay endpoints in `app_seeder`.
-- `commands/map.mjs` (`map`) — emits self-contained `map.html` (Leaflet, data inlined).
-- `commands/ring.mjs` (`ring`) — emits `ring.html`, an offline inline-SVG circular
+- `commands/map.mjs` (`render:map`) — emits self-contained `map.html` (Leaflet, data inlined).
+- `commands/ring.mjs` (`render:ring`) — emits `ring.html`, an offline inline-SVG circular
   projection of the keyspace (no CDN).
-- `commands/timeline.mjs` (`timeline`) — emits `timeline.html` (Chart.js via CDN). Views 1/2/4
+- `commands/timeline.mjs` (`render:timeline`) — emits `timeline.html` (Chart.js via CDN). Views 1/2/4
   are derived from `first_seen`/`last_seen`; the snapshot view reads `snapshots`;
   the storage-health view reads `store_probes`. The crawler writes one `snapshots`
   row per run in `writeSnapshot()` (crawl mode only, gated by `snapshotOnExit`).
@@ -116,9 +116,9 @@ one thing to verify when first cutting a binary.
   `hyperdht/lib/constants.js`) at checkpoints spanning hyperdht's **~20-min record
   TTL** (`defaultMaxAge`) → a decay curve in `store_probes`. A run is ≈22 min, so it
   is scheduled separately (`ops/scheduled-storeprobe.sh`), NOT in the 15-min scan cycle.
-- `commands/summary.mjs` (`summary`) — emits `summary.html`, sortable tables by ASN/operator
+- `commands/summary.mjs` (`render:summary`) — emits `summary.html`, sortable tables by ASN/operator
   and /24 (no CDN; server-rendered rows + vanilla sort/filter JS).
-- `commands/topo.mjs` (`topo`) — emits `topology.html`, a D3 (CDN) force graph of the BGP/AS
+- `commands/topo.mjs` (`render:topo`) — emits `topology.html`, a D3 (CDN) force graph of the BGP/AS
   interconnection. Fetches AS adjacencies + holder names from **RIPEstat**
   (`stat.ripe.net/data/asn-neighbours` and `as-overview`) via `bare-fetch`, cached
   in `as_neighbours` / `as_names` (refetch weekly or `--refresh`). It's the underlay

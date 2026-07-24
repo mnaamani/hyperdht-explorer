@@ -17,18 +17,21 @@ import App from './app.cjs';
 // `--updates` once a real `upgrade` pear:// link is set in package.json.
 
 const COMMANDS = {
+  // collect: crawl / probe / fetch — active network I/O that writes to nodes.db
   scan: () => import('./commands/scan.mjs'),
   geo: () => import('./commands/geo.mjs'),
   probe: () => import('./commands/probe.mjs'),
   seeders: () => import('./commands/seeders.mjs'),
   observe: () => import('./commands/observe.mjs'),
-  map: () => import('./commands/map.mjs'),
-  ring: () => import('./commands/ring.mjs'),
-  timeline: () => import('./commands/timeline.mjs'),
-  summary: () => import('./commands/summary.mjs'),
-  topo: () => import('./commands/topo.mjs'),
   rpki: () => import('./commands/rpki.mjs'),
   storeprobe: () => import('./commands/storeprobe.mjs'),
+  // render: emit a self-contained .html report from already-collected data
+  'render:map': () => import('./commands/map.mjs'),
+  'render:ring': () => import('./commands/ring.mjs'),
+  'render:timeline': () => import('./commands/timeline.mjs'),
+  'render:summary': () => import('./commands/summary.mjs'),
+  'render:topo': () => import('./commands/topo.mjs'),
+  // inspect: read-only local state, no network
   paths: () => import('./commands/paths.mjs'),
   stats: () => import('./commands/stats.mjs')
 };
@@ -38,20 +41,26 @@ const HELP = `hyperdht-explorer v${pkg.version} — hyperdht network-health expl
 usage: hyperdht-explorer <command> [options]
 
 commands:
-  scan         random-walk crawl the DHT        (--for N | --queries N | --prune-hours N | <topic-hex>)
-  geo          ip-api geo-enrich discovered /24s (--refresh)
-  probe        DHT ping nodes for liveness + RTT
-  seeders      tag an app's relay endpoints     <pear://link | key | keet | pearpass> [app-name]
-  observe      seed-and-listen for participants  <pear://link | key | keet | pearpass> [app-name] [--minutes N]
-  map          render map.html (Leaflet world map)
-  ring         render ring.html (keyspace projection)
-  timeline     render timeline.html (time series)
-  summary      render summary.html (network tables)
-  topo         render topology.html (BGP/AS graph) (--refresh)
-  rpki         RIPEstat RPKI validity per /24     (--refresh)
-  storeprobe   storage-reliability decay probe    (--canaries N --checkpoints …)
-  paths        print the data/db/public storage paths
-  stats        print nodes.db size, row counts, last scan/probe
+
+  collect — crawl / probe / fetch (active network I/O → nodes.db):
+    scan             random-walk crawl the DHT        (--for N | --queries N | --prune-hours N | <topic-hex>)
+    geo              ip-api geo-enrich discovered /24s (--refresh)
+    probe            DHT ping nodes for liveness + RTT
+    seeders          tag an app's relay endpoints     <pear://link | key | keet | pearpass> [app-name]
+    observe          seed-and-listen for participants <pear://link | key | keet | pearpass> [app-name] [--minutes N]
+    rpki             RIPEstat RPKI validity per /24    (--refresh)
+    storeprobe       storage-reliability decay probe   (--canaries N --checkpoints …)
+
+  render — emit a self-contained .html report from collected data:
+    render:map       map.html (Leaflet world map)
+    render:ring      ring.html (keyspace projection)
+    render:timeline  timeline.html (time series)
+    render:summary   summary.html (network tables)
+    render:topo      topology.html (BGP/AS graph)     (--refresh)
+
+  inspect — read-only local state (no network):
+    paths            print the data/db/public storage paths
+    stats            print nodes.db size, row counts, last scan/probe
 
 global flags:
   --storage <dir>   override the data directory (default: OS app-data dir)
