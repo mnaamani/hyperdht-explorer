@@ -58,47 +58,10 @@ the dev/prod default).
 Once `hyperdht-explorer` is on your PATH you can drop the `bare bin.mjs` prefix and
 just run `hyperdht-explorer scan --for 60`. Two ways to get there, proper P2P first:
 
-**a) Install peer-to-peer (the Pear way).** No clone, no repo — just the published
-`pear://` link:
-
-```sh
-npx pear-install pear://<key>          # fetch + install the app over the DHT
-```
-
-After the first install, new releases reach you over the swarm — no reinstall.
-(`pear install` as a built-in CLI subcommand is still "upcoming"; today the
-standalone [`pear-install`](https://www.npmjs.com/package/pear-install) module is
-the way. It takes a `pear://` link — **not** a local path like `.`.)
-
-**b) Build a self-contained binary.** `npm run make` (host) or `npm run make:<target>`
+**Build a self-contained binary.** `npm run make` (host) or `npm run make:<target>`
 (cross) produces `out/<host>/hyperdht-explorer`; copy it somewhere on PATH. No
 `bare` needed at runtime. This standalone binary is what the cron wrappers in `ops/`
 expect — see [SCHEDULING.md](./SCHEDULING.md).
-
-### Publishing a release (maintainers)
-
-Distribution rides on a real `upgrade` `pear://` link (the `package.json` field is a
-`pear://<YOUR_KEY_HERE>` placeholder until you mint one). Using the
-[`pear`](https://docs.pears.com) CLI:
-
-```sh
-npm i -g pear                          # the pear CLI
-pear touch                             # mint your pear:// link
-# paste it into package.json "upgrade"
-pear stage <channel>                   # snapshot cwd into the app hypercore
-pear seed <channel>                    # seed it so peers (and pear-install) can fetch
-```
-
-End users then install with `npx pear-install pear://<key>` (path (a) above). This
-mirrors the [hello-pear-bare](https://docs.pears.com/getting-started/from-a-template/start-from-hello-pear-bare)
-template we're modeled on.
-
-### OTA self-updates
-
-The pear-runtime updater is wired in but **off by default** — pass `--updates` to
-enable it. It spawns a background worker that applies P2P over-the-air updates from
-the `upgrade` `pear://` link in `package.json` (set per "Publishing a release"
-above). Until a real link is set, leave updates off.
 
 ## Commands
 
@@ -109,12 +72,12 @@ above). Until a real link is set, leave updates off.
 | `npm run probe`                                                 | Ping every known node to record liveness + round-trip time.                                                    |
 | `npm run seeders -- <pear://link\|preset> [name]`               | Find peers seeding a Pear app and tag their endpoints.                                                         |
 | `npm run observe -- <pear://link\|preset> [name] [--minutes N]` | Seed a public app feed (default) and record connecting (incl. NAT'd) peers; `--disable-seed` for passive lurk. |
-| `npm run map`                                                   | Render `map.html` — an interactive world map of everything collected.                                          |
-| `npm run ring`                                                  | Render `ring.html` — a circular projection of the Kademlia keyspace.                                           |
-| `npm run timeline`                                              | Render `timeline.html` — how the network evolves over time.                                                    |
+| `npm run render:map`                                            | Render `map.html` — an interactive world map of everything collected.                                          |
+| `npm run render:ring`                                           | Render `ring.html` — a circular projection of the Kademlia keyspace.                                           |
+| `npm run render:timeline`                                       | Render `timeline.html` — how the network evolves over time.                                                    |
 | `npm run storeprobe`                                            | Measure DHT storage reliability (canary put/get persistence).                                                  |
-| `npm run summary`                                               | Render `summary.html` — sortable tables of nodes by ASN/operator and /24.                                      |
-| `npm run topo -- [--refresh]`                                   | Render `topology.html` — BGP/AS interconnection of the hosting networks.                                       |
+| `npm run render:summary`                                        | Render `summary.html` — sortable tables of nodes by ASN/operator and /24.                                      |
+| `npm run render:topo -- [--refresh]`                            | Render `topology.html` — BGP/AS interconnection of the hosting networks.                                       |
 | `npm run rpki -- [--refresh]`                                   | Fetch RPKI route-origin validity for the hosting prefixes (RIPEstat).                                          |
 | `npm run stats`                                                 | Print a read-only health report: db size, per-table row counts, freshness.                                     |
 
@@ -134,7 +97,7 @@ npm run scan          # let it run a while, then Ctrl-C
 npm run geo
 npm run probe
 npm run seeders -- pear://17pwkcszz18deaccarhrrixhzf1f5ko1b1dz6j3pxhexebutjwzy keet
-npm run map           # open the printed file:// URL in a browser
+npm run render:map    # open the printed file:// URL in a browser
 ```
 
 ### Bounded / scheduled scans
@@ -375,7 +338,7 @@ crawler appends to at the end of every run, so it fills in as you scan more.
 | File                          | Role                                                                                                   |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `bin.mjs`                     | CLI entry — parses flags, resolves the data dir, dispatches subcommands                                |
-| `commands/*.mjs`              | one file per subcommand (`scan`, `geo`, `probe`, `map`, …), each exporting `run(ctx)`                  |
+| `commands/*.mjs`              | one file per subcommand (`scan`, `geo`, `probe`, `render:map`, …), each exporting `run(ctx)`           |
 | `db.mjs`                      | shared SQLite schema, per-table repository accessors, + helpers (`prefixOf`, `parseAs`, `hostKind`, …) |
 | `paths.mjs`                   | resolves the OS app-data dir + DB / HTML paths                                                         |
 | `app.cjs`, `workers/main.cjs` | pear-runtime OTA self-updater (optional, `--updates`)                                                  |
