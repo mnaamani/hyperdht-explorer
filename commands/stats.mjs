@@ -1,5 +1,5 @@
 import fs from 'bare-fs';
-import { openDb } from '../db.mjs';
+import { openDb, nodesRepo, snapshotsRepo, storeProbesRepo } from '../db.mjs';
 import { dbPath } from '../paths.mjs';
 
 // Print a quick health/size report for nodes.db: on-disk size, per-table row
@@ -68,6 +68,9 @@ const TABLES = [
 export function run() {
   const path = dbPath();
   const db = openDb();
+  const nodes = nodesRepo(db);
+  const snapshots = snapshotsRepo(db);
+  const storeProbes = storeProbesRepo(db);
 
   // --- on-disk size (main file + WAL + shared-memory index) -------------------
   const main = fileSize(path);
@@ -81,6 +84,9 @@ export function run() {
   );
 
   // --- row counts -------------------------------------------------------------
+  // Generic diagnostic over a fixed table whitelist (TABLES) — the one place a
+  // table name is interpolated. No repo method: it spans every table by design,
+  // and the list is code-controlled, never user input.
   console.log('\nrows:');
   for (const t of TABLES) {
     const { n } = db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get();
@@ -88,29 +94,16 @@ export function run() {
   }
 
   // --- node breakdown ---------------------------------------------------------
-  const nodes = db
-    .prepare(
-      `SELECT
-         SUM(CASE WHEN alive = 1 THEN 1 ELSE 0 END) AS alive,
-         SUM(CASE WHEN alive = 0 THEN 1 ELSE 0 END) AS dead,
-         SUM(CASE WHEN alive IS NULL THEN 1 ELSE 0 END) AS unprobed,
-         SUM(CASE WHEN app_seeder IS NOT NULL THEN 1 ELSE 0 END) AS seeders,
-         MAX(last_seen) AS last_seen,
-         MAX(last_ping) AS last_ping
-       FROM nodes`
-    )
-    .get();
+  const breakdown = nodes.breakdown();
   console.log('\nnodes:');
   console.log(
-    `  alive ${nodes.alive ?? 0} · dead ${nodes.dead ?? 0} · unprobed ${nodes.unprobed ?? 0} · seeders ${nodes.seeders ?? 0}`
+    `  alive ${breakdown.alive ?? 0} · dead ${breakdown.dead ?? 0} · unprobed ${breakdown.unprobed ?? 0} · seeders ${breakdown.seeders ?? 0}`
   );
-  console.log(`  last seen:  ${fmtTime(nodes.last_seen)}`);
-  console.log(`  last probe: ${fmtTime(nodes.last_ping)}`);
+  console.log(`  last seen:  ${fmtTime(breakdown.last_seen)}`);
+  console.log(`  last probe: ${fmtTime(breakdown.last_ping)}`);
 
   // --- last scan snapshot -----------------------------------------------------
-  const snap = db
-    .prepare('SELECT * FROM snapshots ORDER BY ts DESC LIMIT 1')
-    .get();
+  const snap = snapshots.latest();
   console.log('\nlast scan snapshot:');
   if (snap) {
     console.log(`  ${fmtTime(snap.ts)}`);
@@ -122,9 +115,7 @@ export function run() {
   }
 
   // --- last storeprobe --------------------------------------------------------
-  const sp = db
-    .prepare('SELECT * FROM store_probes ORDER BY ts DESC LIMIT 1')
-    .get();
+  const sp = storeProbes.latest();
   console.log('\nlast storeprobe:');
   if (sp) {
     console.log(`  ${fmtTime(sp.ts)}`);

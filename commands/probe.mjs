@@ -1,6 +1,6 @@
 import DHT from 'hyperdht';
 import process from 'bare-process';
-import { openDb } from '../db.mjs';
+import { openDb, nodesRepo } from '../db.mjs';
 
 // Probe discovered nodes with a DHT PING to record whether they're currently
 // reachable and how fast they respond. This is the only "interrogation" the
@@ -13,16 +13,9 @@ const CONCURRENCY = 40;
 
 export async function run(ctx) {
   const db = openDb();
-  const stmtAlive = db.prepare(
-    'UPDATE nodes SET alive = 1, rtt_ms = ?, last_ping = ? WHERE host = ? AND port = ?'
-  );
-  const stmtDead = db.prepare(
-    'UPDATE nodes SET alive = 0, rtt_ms = NULL, last_ping = ? WHERE host = ? AND port = ?'
-  );
+  const nodes = nodesRepo(db);
 
-  const targets = db
-    .prepare('SELECT host, port FROM nodes ORDER BY last_seen DESC')
-    .all();
+  const targets = nodes.byRecency();
   console.log(
     `probe: pinging ${targets.length} node(s) (timeout ${PING_TIMEOUT}ms, ${CONCURRENCY} concurrent)\n`
   );
@@ -53,11 +46,16 @@ export async function run(ctx) {
         )
       ]);
       const rtt = Date.now() - t0;
-      stmtAlive.run(rtt, Date.now(), node.host, node.port);
+      nodes.markAlive({
+        host: node.host,
+        port: node.port,
+        rttMs: rtt,
+        at: Date.now()
+      });
       rtts.push(rtt);
       alive++;
     } catch {
-      stmtDead.run(Date.now(), node.host, node.port);
+      nodes.markDead({ host: node.host, port: node.port, at: Date.now() });
       dead++;
     }
     if (++done % 50 === 0) {

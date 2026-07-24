@@ -1,6 +1,6 @@
 import process from 'bare-process';
 import fs from 'bare-fs';
-import { openDb } from '../db.mjs';
+import { openDb, nodesRepo } from '../db.mjs';
 import { htmlPath, ensureDirs } from '../paths.mjs';
 
 // Render the discovered nodes onto a circular projection of the 256-bit Kademlia
@@ -15,15 +15,10 @@ import { htmlPath, ensureDirs } from '../paths.mjs';
 
 export function run(ctx) {
   const db = openDb();
+  const nodes = nodesRepo(db);
 
-  const rows = db
-    .prepare(
-      'SELECT id, seen_count, sessions, app_seeder FROM nodes WHERE id IS NOT NULL'
-    )
-    .all();
-  const skipped = db
-    .prepare('SELECT COUNT(*) AS n FROM nodes WHERE id IS NULL')
-    .get().n;
+  const rows = nodes.withRoutingId();
+  const skipped = nodes.countWithoutRoutingId();
 
   // --- Pear-inspired theme ----------------------------------------------------
   const BG = '#060a08'; // near-black with a faint green tint

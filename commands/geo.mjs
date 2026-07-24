@@ -1,6 +1,12 @@
 import process from 'bare-process';
 import fetch from 'bare-fetch';
-import { openDb, prefixOf } from '../db.mjs';
+import {
+  openDb,
+  nodesRepo,
+  observationsRepo,
+  geoRepo,
+  prefixOf
+} from '../db.mjs';
 
 // Enrich discovered nodes with geo-location via ip-api.com's batch endpoint.
 //
@@ -23,25 +29,16 @@ export async function run(ctx) {
     new Promise((resolve) => globalThis.setTimeout(resolve, ms));
 
   const db = openDb();
-
-  const stmtUpsertGeo = db.prepare(`
-  INSERT INTO geo (prefix, status, country, country_code, region, city, lat, lon, isp, org, as_info, mobile, proxy, hosting, queried_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  ON CONFLICT(prefix) DO UPDATE SET
-    status = excluded.status, country = excluded.country, country_code = excluded.country_code,
-    region = excluded.region, city = excluded.city, lat = excluded.lat, lon = excluded.lon,
-    isp = excluded.isp, org = excluded.org, as_info = excluded.as_info,
-    mobile = excluded.mobile, proxy = excluded.proxy, hosting = excluded.hosting, queried_at = excluded.queried_at
-`);
+  const nodes = nodesRepo(db);
+  const observations = observationsRepo(db);
+  const geo = geoRepo(db);
 
   // Skip /24s already fully enriched: successes that already have the classification
   // flags, plus cached failures. (Older success rows missing the flags get refetched
   // once to backfill them; --refresh forces everything.)
   const done = new Set();
   if (!REFRESH) {
-    for (const row of db
-      .prepare('SELECT prefix, status, hosting FROM geo')
-      .all()) {
+    for (const row of geo.statusFlags()) {
       if (row.status !== 'success' || row.hosting !== null) {
         done.add(row.prefix);
       }
@@ -50,12 +47,10 @@ export async function run(ctx) {
   const need = new Map(); // prefix -> representative IP to query
   // classify both crawled nodes AND observed (seed-and-listen) peers
   const hosts = new Set();
-  for (const { host } of db.prepare('SELECT DISTINCT host FROM nodes').all()) {
+  for (const host of nodes.distinctHosts()) {
     hosts.add(host);
   }
-  for (const { host } of db
-    .prepare('SELECT DISTINCT host FROM observations')
-    .all()) {
+  for (const host of observations.distinctHosts()) {
     hosts.add(host);
   }
   for (const host of hosts) {
@@ -110,23 +105,23 @@ export async function run(ctx) {
     for (let j = 0; j < chunk.length; j++) {
       const [prefix] = chunk[j];
       const result = results[j] || { status: 'fail', message: 'no result' };
-      stmtUpsertGeo.run(
+      geo.upsert({
         prefix,
-        result.status,
-        result.country ?? null,
-        result.countryCode ?? null,
-        result.regionName ?? null,
-        result.city ?? null,
-        result.lat ?? null,
-        result.lon ?? null,
-        result.isp ?? null,
-        result.org ?? null,
-        result.as ?? null,
-        result.mobile ? 1 : 0,
-        result.proxy ? 1 : 0,
-        result.hosting ? 1 : 0,
-        now
-      );
+        status: result.status,
+        country: result.country ?? null,
+        countryCode: result.countryCode ?? null,
+        region: result.regionName ?? null,
+        city: result.city ?? null,
+        lat: result.lat ?? null,
+        lon: result.lon ?? null,
+        isp: result.isp ?? null,
+        org: result.org ?? null,
+        asInfo: result.as ?? null,
+        mobile: result.mobile ? 1 : 0,
+        proxy: result.proxy ? 1 : 0,
+        hosting: result.hosting ? 1 : 0,
+        queriedAt: now
+      });
       if (result.status === 'success') {
         ok++;
         let kind = 'residential';

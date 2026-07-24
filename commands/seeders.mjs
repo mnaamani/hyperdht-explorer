@@ -3,7 +3,7 @@ import b4a from 'b4a';
 import crypto from 'hypercore-crypto';
 import idEnc from 'hypercore-id-encoding';
 import process from 'bare-process';
-import { openDb, APP_PRESETS, resolvePreset } from '../db.mjs';
+import { openDb, nodesRepo, APP_PRESETS, resolvePreset } from '../db.mjs';
 
 // Find peers seeding a specific Pear application (or any Hypercore), given its
 // pear:// link or public key. This works because app distribution is public by
@@ -55,15 +55,7 @@ export async function run(ctx) {
   console.log('\nlooking up seeders...\n');
 
   const db = openDb();
-  // Record a relay endpoint as a discovered node and tag it as an app seeder.
-  const stmtSeeder = db.prepare(`
-  INSERT INTO nodes (host, port, first_seen, last_seen, seen_count, sessions, app_seeder)
-  VALUES (?, ?, ?, ?, 1, 1, ?)
-  ON CONFLICT(host, port) DO UPDATE SET
-    last_seen  = excluded.last_seen,
-    seen_count = nodes.seen_count + 1,
-    app_seeder = excluded.app_seeder
-`);
+  const nodes = nodesRepo(db);
 
   const dht = new DHT();
   await dht.ready();
@@ -93,13 +85,12 @@ export async function run(ctx) {
   const now = Date.now();
   for (const addr of relayAddrs) {
     const idx = addr.lastIndexOf(':');
-    stmtSeeder.run(
-      addr.slice(0, idx),
-      Number(addr.slice(idx + 1)),
-      now,
-      now,
-      appName
-    );
+    nodes.recordSeederEndpoint({
+      host: addr.slice(0, idx),
+      port: Number(addr.slice(idx + 1)),
+      app: appName,
+      at: now
+    });
   }
 
   console.log(

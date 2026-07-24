@@ -1,6 +1,13 @@
 import process from 'bare-process';
 import fs from 'bare-fs';
-import { openDb, prefixOf } from '../db.mjs';
+import {
+  openDb,
+  nodesRepo,
+  observationsRepo,
+  snapshotsRepo,
+  storeProbesRepo,
+  prefixOf
+} from '../db.mjs';
 import { htmlPath, ensureDirs } from '../paths.mjs';
 
 // Render how the DHT network evolves over time -> timeline.html.
@@ -20,13 +27,9 @@ export function run(ctx) {
   const HOUR = 3600 * 1000;
   const now = Date.now();
 
-  const nodes = db
-    .prepare('SELECT first_seen, last_seen, seen_count FROM nodes')
-    .all();
-  const snapshots = db.prepare('SELECT * FROM snapshots ORDER BY ts').all();
-  const storeProbes = db
-    .prepare('SELECT * FROM store_probes ORDER BY ts')
-    .all();
+  const nodes = nodesRepo(db).lifespans();
+  const snapshots = snapshotsRepo(db).chronological();
+  const storeProbes = storeProbesRepo(db).chronological();
 
   function fmt(ts) {
     const date = new Date(ts);
@@ -156,9 +159,7 @@ export function run(ctx) {
 
   // identity stability: aggregate observation count per public_key across all the
   // endpoints (host:port) it was seen from, then bin the same way.
-  const obsRows = db
-    .prepare('SELECT public_key, count FROM observations')
-    .all();
+  const obsRows = observationsRepo(db).keyCounts();
   const obsByKey = new Map();
   for (const obs of obsRows) {
     obsByKey.set(

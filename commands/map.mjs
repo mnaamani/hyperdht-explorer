@@ -1,6 +1,13 @@
 import process from 'bare-process';
 import fs from 'bare-fs';
-import { openDb, prefixOf, hostKind } from '../db.mjs';
+import {
+  openDb,
+  nodesRepo,
+  observationsRepo,
+  geoRepo,
+  prefixOf,
+  hostKind
+} from '../db.mjs';
 import { htmlPath, ensureDirs } from '../paths.mjs';
 
 // Render the discovered + geo-located nodes onto an interactive world map.
@@ -11,22 +18,16 @@ import { htmlPath, ensureDirs } from '../paths.mjs';
 
 export function run(ctx) {
   const db = openDb();
+  const nodes = nodesRepo(db);
+  const observations = observationsRepo(db);
+  const geoData = geoRepo(db);
 
   // geo rows keyed by /24 prefix (only successfully located networks)
-  const geo = new Map();
-  for (const geoRow of db
-    .prepare("SELECT * FROM geo WHERE status = 'success' AND lat IS NOT NULL")
-    .all()) {
-    geo.set(geoRow.prefix, geoRow);
-  }
+  const geo = geoData.locatedWithCoords();
 
   // aggregate node stats per /24
   const groups = new Map();
-  for (const node of db
-    .prepare(
-      'SELECT host, port, sessions, seen_count, first_seen, last_seen, alive, rtt_ms, app_seeder FROM nodes'
-    )
-    .all()) {
+  for (const node of nodes.allWithStats()) {
     const prefix = prefixOf(node.host);
     const geoRow = geo.get(prefix);
     if (!geoRow) {
@@ -79,14 +80,12 @@ export function run(ctx) {
     ...group,
     apps: [...group.apps].sort()
   }));
-  const totalNodes = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n;
+  const totalNodes = nodes.count();
   const located = points.reduce((sum, point) => sum + point.nodes, 0);
 
   // observed participants (observe.mjs) grouped by /24
   const obs = new Map();
-  for (const obsRow of db
-    .prepare('SELECT host, app, public_key FROM observations')
-    .all()) {
+  for (const obsRow of observations.all()) {
     const geoRow = geo.get(prefixOf(obsRow.host));
     if (!geoRow) {
       continue;

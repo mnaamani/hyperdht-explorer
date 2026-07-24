@@ -1,7 +1,16 @@
 import process from 'bare-process';
 import fs from 'bare-fs';
 import fetch from 'bare-fetch';
-import { openDb, prefixOf, parseAs, cleanName } from '../db.mjs';
+import {
+  openDb,
+  nodesRepo,
+  geoRepo,
+  asTopologyRepo,
+  rpkiRepo,
+  prefixOf,
+  parseAs,
+  cleanName
+} from '../db.mjs';
 import { htmlPath, ensureDirs } from '../paths.mjs';
 
 // AS-level BGP topology of the networks hosting DHT nodes -> topology.html.
@@ -31,17 +40,16 @@ export async function run(ctx) {
   const sleep = (ms) =>
     new Promise((resolve) => globalThis.setTimeout(resolve, ms));
   const db = openDb();
+  const nodeRepo = nodesRepo(db);
+  const geoReader = geoRepo(db);
+  const asTopo = asTopologyRepo(db);
+  const rpkiReader = rpkiRepo(db);
 
   // --- 1. our primary ASNs (with node counts + operator names) ----------------
-  const geo = new Map();
-  for (const row of db
-    .prepare("SELECT * FROM geo WHERE status = 'success'")
-    .all()) {
-    geo.set(row.prefix, row);
-  }
+  const geo = geoReader.locatedNetworks();
 
   const primaries = new Map(); // asnNum -> { asn, name, nodes }
-  for (const { host } of db.prepare('SELECT host FROM nodes').all()) {
+  for (const host of nodeRepo.hosts()) {
     const geoRow = geo.get(prefixOf(host));
     if (!geoRow) {
       continue;
@@ -63,20 +71,12 @@ export async function run(ctx) {
   // --- 2. ensure BGP neighbour data is cached ---------------------------------
   const fresh = new Set();
   if (!REFRESH) {
-    for (const row of db
-      .prepare(
-        'SELECT asn, MAX(fetched_at) AS f FROM as_neighbours GROUP BY asn'
-      )
-      .all()) {
+    for (const row of asTopo.neighbourFreshness()) {
       if (Date.now() - row.f < MAX_AGE) {
         fresh.add(row.asn);
       }
     }
   }
-  const insNeighbour = db.prepare(
-    'INSERT OR REPLACE INTO as_neighbours (asn, neighbour, type, power, fetched_at) VALUES (?, ?, ?, ?, ?)'
-  );
-  const delNeighbours = db.prepare('DELETE FROM as_neighbours WHERE asn = ?');
 
   const toFetch = primaryAsns.filter((a) => !fresh.has(a));
   if (toFetch.length) {
@@ -91,16 +91,16 @@ export async function run(ctx) {
       );
       const json = await res.json();
       const neighbours = json?.data?.neighbours || [];
-      delNeighbours.run(asn);
+      asTopo.deleteNeighbours(asn);
       const now = Date.now();
       for (const neighbour of neighbours) {
-        insNeighbour.run(
+        asTopo.insertNeighbour({
           asn,
-          neighbour.asn,
-          neighbour.type || null,
-          neighbour.power || 0,
-          now
-        );
+          neighbour: neighbour.asn,
+          type: neighbour.type || null,
+          power: neighbour.power || 0,
+          at: now
+        });
       }
       console.log(`  AS${asn}: ${neighbours.length} neighbours`);
     } catch (err) {
@@ -113,13 +113,7 @@ export async function run(ctx) {
   const primarySet = new Set(primaryAsns);
   const neighboursOf = new Map(); // asn -> Set(neighbour)
   for (const asn of primaryAsns) {
-    const set = new Set(
-      db
-        .prepare('SELECT neighbour FROM as_neighbours WHERE asn = ?')
-        .all(asn)
-        .map((row) => row.neighbour)
-    );
-    neighboursOf.set(asn, set);
+    neighboursOf.set(asn, new Set(asTopo.neighboursOf(asn)));
   }
 
   const edges = new Map(); // "min-max" -> {source,target}
@@ -166,15 +160,7 @@ export async function run(ctx) {
   }
 
   // --- 4. names for connector ASNs (cached; fetch missing from RIPEstat) ------
-  const nameCache = new Map(
-    db
-      .prepare('SELECT asn, name FROM as_names')
-      .all()
-      .map((row) => [row.asn, row.name])
-  );
-  const insName = db.prepare(
-    'INSERT OR REPLACE INTO as_names (asn, name, fetched_at) VALUES (?, ?, ?)'
-  );
+  const nameCache = new Map(asTopo.names().map((row) => [row.asn, row.name]));
   for (const [connectorAsn] of connectors) {
     if (nameCache.has(connectorAsn)) {
       continue;
@@ -186,7 +172,7 @@ export async function run(ctx) {
       const json = await res.json();
       const holder = json?.data?.holder || null;
       nameCache.set(connectorAsn, holder);
-      insName.run(connectorAsn, holder, Date.now());
+      asTopo.insertName({ asn: connectorAsn, name: holder, at: Date.now() });
     } catch {
       nameCache.set(connectorAsn, null);
     }
@@ -196,10 +182,7 @@ export async function run(ctx) {
   // --- 5. node + link arrays --------------------------------------------------
   // --- RPKI status per ASN (aggregated from rpki rows via geo's /24 -> ASN) ----
   const rpkiByPrefix = new Map(
-    db
-      .prepare('SELECT prefix24, status FROM rpki')
-      .all()
-      .map((row) => [row.prefix24, row.status])
+    rpkiReader.statuses().map((row) => [row.prefix24, row.status])
   );
   const asnRpki = new Map(); // asnNum -> {valid, invalid, unknown, unannounced}
   for (const [prefix24, status] of rpkiByPrefix) {
@@ -236,9 +219,7 @@ export async function run(ctx) {
 
   // --- apps hosted per ASN (from app_seeder tags via /24 -> ASN) ---------------
   const asnApps = new Map(); // asnNum -> Set(app)
-  for (const row of db
-    .prepare('SELECT host, app_seeder FROM nodes WHERE app_seeder IS NOT NULL')
-    .all()) {
+  for (const row of nodeRepo.seederHosts()) {
     const geoRow = geo.get(prefixOf(row.host));
     if (!geoRow) {
       continue;

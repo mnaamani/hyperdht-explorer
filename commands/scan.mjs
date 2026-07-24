@@ -2,7 +2,15 @@ import DHT from 'hyperdht';
 import b4a from 'b4a';
 import sodium from 'sodium-universal';
 import process from 'bare-process';
-import { openDb, prefixOf, isPrivateIp } from '../db.mjs';
+import {
+  openDb,
+  nodesRepo,
+  observationsRepo,
+  geoRepo,
+  snapshotsRepo,
+  prefixOf,
+  isPrivateIp
+} from '../db.mjs';
 
 // ---------------------------------------------------------------------------
 // hyperdht-explorer: random-walk crawler for the hyperdht (Kademlia) node network.
@@ -79,29 +87,10 @@ export async function run(ctx) {
   // --- database --------------------------------------------------------------
 
   const db = openDb();
-
-  const stmtExists = db.prepare(
-    'SELECT first_seen, sessions FROM nodes WHERE host = ? AND port = ?'
-  );
-  // First sighting of a node within this run: bump seen_count AND sessions.
-  const stmtUpsert = db.prepare(`
-  INSERT INTO nodes (host, port, id, first_seen, last_seen, seen_count, sessions)
-  VALUES (?, ?, ?, ?, ?, 1, 1)
-  ON CONFLICT(host, port) DO UPDATE SET
-    last_seen  = excluded.last_seen,
-    seen_count = nodes.seen_count + 1,
-    sessions   = nodes.sessions + 1,
-    id         = COALESCE(excluded.id, nodes.id)
-`);
-  // Repeat sighting within the same run: bump seen_count only (not sessions).
-  const stmtBump = db.prepare(`
-  UPDATE nodes SET last_seen = ?, seen_count = seen_count + 1, id = COALESCE(?, id)
-  WHERE host = ? AND port = ?
-`);
-  const stmtKnownPeers = db.prepare(
-    'SELECT host, port FROM nodes ORDER BY last_seen DESC, sessions DESC LIMIT ?'
-  );
-  const stmtPrune = db.prepare('DELETE FROM nodes WHERE last_seen < ?');
+  const nodes = nodesRepo(db);
+  const observations = observationsRepo(db);
+  const geo = geoRepo(db);
+  const snapshots = snapshotsRepo(db);
 
   // Drop stale nodes not seen within pruneHours. Returns number removed.
   // (The geo cache is intentionally left intact — it's keyed by /24 and reusable
@@ -111,7 +100,7 @@ export async function run(ctx) {
       return 0;
     }
     const cutoff = Date.now() - pruneHours * 3600 * 1000;
-    const { changes } = stmtPrune.run(cutoff);
+    const changes = nodes.pruneStaleBefore(cutoff);
     if (changes) {
       console.log(`pruned ${changes} node(s) not seen in ${pruneHours}h`);
     }
@@ -136,13 +125,23 @@ export async function run(ctx) {
     const now = Date.now();
 
     if (seenThisRun.has(addr)) {
-      stmtBump.run(now, idHex, node.host, node.port);
+      nodes.recordRepeatSighting({
+        host: node.host,
+        port: node.port,
+        id: idHex,
+        at: now
+      });
       return;
     }
     seenThisRun.add(addr);
 
-    const prior = stmtExists.get(node.host, node.port);
-    stmtUpsert.run(node.host, node.port, idHex, now, now);
+    const prior = nodes.priorSighting({ host: node.host, port: node.port });
+    nodes.recordFirstSightingThisRun({
+      host: node.host,
+      port: node.port,
+      id: idHex,
+      at: now
+    });
 
     if (!prior) {
       newThisRun++;
@@ -170,7 +169,7 @@ export async function run(ctx) {
 
   // Prune stale nodes up front so we don't seed the routing table with dead ones.
   prune();
-  const knownPeers = stmtKnownPeers.all(200);
+  const knownPeers = nodes.recentPeers(200);
 
   const dht = new DHT({ nodes: knownPeers });
 
@@ -237,7 +236,7 @@ export async function run(ctx) {
         prune();
       } // periodically drop nodes gone stale mid-run
       if (queries % 10 === 0) {
-        const total = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n;
+        const total = nodes.count();
         console.log(
           `\n-- ${queries} queries | ${seenThisRun.size} nodes this run | ${total} known all-time --\n`
         );
@@ -249,19 +248,12 @@ export async function run(ctx) {
   }
 
   function summary() {
-    const total = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n;
+    const total = nodes.count();
     console.log(
       `\n=== summary: ${seenThisRun.size} nodes this run, ${total} known all-time, ${queries} queries ===`
     );
     console.log('\nmost stable peers (by sessions seen):');
-    const rows = db
-      .prepare(
-        `
-    SELECT host, port, sessions, seen_count, first_seen, last_seen
-    FROM nodes ORDER BY sessions DESC, seen_count DESC LIMIT 15
-  `
-      )
-      .all();
+    const rows = nodes.mostStable(15);
     for (const row of rows) {
       const lifespan = ago(row.first_seen);
       console.log(
@@ -272,40 +264,18 @@ export async function run(ctx) {
 
   // Record one metrics snapshot for the time-series view (timeline.mjs).
   function writeSnapshot() {
-    const total = db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n;
-    const alive = db
-      .prepare('SELECT COUNT(*) AS n FROM nodes WHERE alive = 1')
-      .get().n;
-    const seeders = db
-      .prepare('SELECT COUNT(*) AS n FROM nodes WHERE app_seeder IS NOT NULL')
-      .get().n;
-    const observed = db
-      .prepare('SELECT COUNT(DISTINCT public_key) AS n FROM observations')
-      .get().n;
-    const rtts = db
-      .prepare(
-        'SELECT rtt_ms FROM nodes WHERE alive = 1 AND rtt_ms IS NOT NULL'
-      )
-      .all()
-      .map((row) => row.rtt_ms)
-      .sort((a, b) => a - b);
-    const medianRtt = rtts.length ? rtts[rtts.length >> 1] : null;
+    const total = nodes.count();
+    const alive = nodes.countAlive();
+    const seeders = nodes.countSeeders();
+    const observed = observations.countDistinctParticipants();
+    const medianRtt = nodes.medianAliveRtt();
 
     // distinct located countries / ASNs among current nodes (join by /24 in JS)
-    const geo = new Map(
-      db
-        .prepare(
-          "SELECT prefix, country, as_info FROM geo WHERE status = 'success'"
-        )
-        .all()
-        .map((geoRow) => [geoRow.prefix, geoRow])
-    );
+    const networks = geo.locatedNetworks();
     const countries = new Set();
     const asns = new Set();
-    for (const { host } of db
-      .prepare('SELECT DISTINCT host FROM nodes')
-      .all()) {
-      const geoRow = geo.get(prefixOf(host));
+    for (const host of nodes.distinctHosts()) {
+      const geoRow = networks.get(prefixOf(host));
       if (geoRow) {
         if (geoRow.country) {
           countries.add(geoRow.country);
@@ -316,23 +286,18 @@ export async function run(ctx) {
       }
     }
 
-    db.prepare(
-      `
-    INSERT OR REPLACE INTO snapshots (ts, total_nodes, alive, new_nodes, pruned, countries, asns, seeders, median_rtt, observed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `
-    ).run(
-      Date.now(),
-      total,
+    snapshots.insert({
+      ts: Date.now(),
+      totalNodes: total,
       alive,
-      newThisRun,
-      prunedThisRun,
-      countries.size,
-      asns.size,
+      newNodes: newThisRun,
+      pruned: prunedThisRun,
+      countries: countries.size,
+      asns: asns.size,
       seeders,
       medianRtt,
       observed
-    );
+    });
     console.log(
       `snapshot: ${total} nodes, ${alive} alive, ${newThisRun} new, ${prunedThisRun} pruned, ${countries.size} countries, ${seeders} seeders, ${observed} observed`
     );

@@ -3,7 +3,7 @@ import b4a from 'b4a';
 import crypto from 'hypercore-crypto';
 import process from 'bare-process';
 import constants from 'hyperdht/lib/constants.js';
-import { openDb } from '../db.mjs';
+import { openDb, storeProbesRepo } from '../db.mjs';
 
 // Storage-reliability probe: measure how well the DHT actually STORES data — a
 // dimension that pinging nodes can't reveal.
@@ -140,22 +140,17 @@ export async function run(ctx) {
   );
 
   const db = openDb();
-  db.prepare(
-    `
-  INSERT OR REPLACE INTO store_probes (ts, canaries, put_ok, get_ok, replicas_initial, replicas_after, persistence, delay_s, decay)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`
-  ).run(
-    t0,
-    CANARIES,
+  storeProbesRepo(db).insert({
+    ts: t0,
+    canaries: CANARIES,
     putOk,
     getOk,
     replicasInitial,
     replicasAfter,
     persistence,
-    Math.round(checkpoints[checkpoints.length - 1] * 60),
-    JSON.stringify(decay)
-  );
+    delayS: Math.round(checkpoints[checkpoints.length - 1] * 60),
+    decay: JSON.stringify(decay)
+  });
   db.close();
 
   await dht.destroy();

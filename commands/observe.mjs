@@ -10,6 +10,8 @@ import fs from 'bare-fs';
 import path from 'bare-path';
 import {
   openDb,
+  observationsRepo,
+  geoRepo,
   prefixOf,
   hostKind,
   isPrivateIp,
@@ -84,23 +86,15 @@ export async function run(ctx) {
   const topic = crypto.discoveryKey(publicKey);
 
   const db = openDb();
-  const upsert = db.prepare(`
-  INSERT INTO observations (public_key, host, port, app, first_seen, last_seen, count)
-  VALUES (?, ?, ?, ?, ?, ?, 1)
-  ON CONFLICT(public_key, host, port) DO UPDATE SET last_seen = excluded.last_seen, count = count + 1
-`);
+  const observations = observationsRepo(db);
+  const geo = geoRepo(db);
 
   const seen = new Set(); // host:port connections seen this session
 
   // participants (public keys) observed in PRIOR sessions for this app — lets us
   // tell "returning" peers from brand-new ones. Re-observation is the meaningful
   // liveness signal for NAT'd peers (pinging their transient address would not be).
-  const priorKeys = new Set(
-    db
-      .prepare('SELECT DISTINCT public_key FROM observations WHERE app = ?')
-      .all(appName)
-      .map((row) => row.public_key)
-  );
+  const priorKeys = new Set(observations.distinctKeysForApp(appName));
   const sessionKeys = new Set();
   let returning = 0;
   let fresh = 0;
@@ -118,7 +112,13 @@ export async function run(ctx) {
         return;
       } // skip LAN/loopback/reserved addresses
       const pk = b4a.toString(conn.remotePublicKey, 'hex');
-      upsert.run(pk, host, port, appName, Date.now(), Date.now());
+      observations.record({
+        publicKey: pk,
+        host,
+        port,
+        app: appName,
+        at: Date.now()
+      });
       const key = host + ':' + port;
       if (seen.has(key)) {
         return;
@@ -148,29 +148,15 @@ export async function run(ctx) {
   }
 
   function report() {
-    const allTimeKeys = db
-      .prepare(
-        'SELECT COUNT(DISTINCT public_key) AS n FROM observations WHERE app = ?'
-      )
-      .get(appName).n;
-    const hosts = db
-      .prepare('SELECT DISTINCT host FROM observations WHERE app = ?')
-      .all(appName)
-      .map((row) => row.host);
+    const allTimeKeys = observations.countDistinctForApp(appName);
+    const hosts = observations.distinctHostsForApp(appName);
     const prefixes = new Set(hosts.map(prefixOf));
     // classify the /24s we already have geo for
-    const geo = new Map(
-      db
-        .prepare(
-          "SELECT prefix, country, mobile, proxy, hosting FROM geo WHERE status = 'success'"
-        )
-        .all()
-        .map((geoRow) => [geoRow.prefix, geoRow])
-    );
+    const networks = geo.locatedNetworks();
     const kinds = {};
     let classified = 0;
     for (const prefix of prefixes) {
-      const geoRow = geo.get(prefix);
+      const geoRow = networks.get(prefix);
       if (!geoRow) {
         continue;
       }

@@ -1,6 +1,6 @@
 import process from 'bare-process';
 import fetch from 'bare-fetch';
-import { openDb, prefixOf } from '../db.mjs';
+import { openDb, nodesRepo, rpkiRepo, prefixOf } from '../db.mjs';
 
 // Enrich the networks hosting DHT nodes with RPKI route-origin validity, from
 // RIPEstat. For each /24 we find its real announced (covering) prefix + origin
@@ -60,14 +60,12 @@ export async function run(ctx) {
   }
 
   const db = openDb();
-  const upsert = db.prepare(`
-  INSERT OR REPLACE INTO rpki (prefix24, covering, origin_asn, status, fetched_at)
-  VALUES (?, ?, ?, ?, ?)
-`);
+  const nodes = nodesRepo(db);
+  const rpki = rpkiRepo(db);
 
   // /24 -> a representative real IP (an actual node host in that subnet)
   const reps = new Map();
-  for (const { host } of db.prepare('SELECT host FROM nodes').all()) {
+  for (const host of nodes.hosts()) {
     const prefix = prefixOf(host);
     if (!reps.has(prefix)) {
       reps.set(prefix, host);
@@ -77,9 +75,7 @@ export async function run(ctx) {
   // skip /24s already cached fresh
   const fresh = new Set();
   if (!REFRESH) {
-    for (const row of db
-      .prepare('SELECT prefix24, fetched_at FROM rpki')
-      .all()) {
+    for (const row of rpki.freshness()) {
       if (Date.now() - row.fetched_at < MAX_AGE) {
         fresh.add(row.prefix24);
       }
@@ -98,7 +94,13 @@ export async function run(ctx) {
     try {
       const hit = covers.find((cover) => inCidr(p24, cover.cidr));
       if (hit) {
-        upsert.run(p24, hit.cidr, hit.asn, hit.status, Date.now());
+        rpki.upsert({
+          prefix24: p24,
+          covering: hit.cidr,
+          originAsn: hit.asn,
+          status: hit.status,
+          fetchedAt: Date.now()
+        });
         counts[hit.status]++;
         continue;
       }
@@ -107,7 +109,13 @@ export async function run(ctx) {
       const cidr = ni?.data?.prefix || null;
       const asn = Number((ni?.data?.asns || [])[0]);
       if (!cidr || !asn) {
-        upsert.run(p24, null, null, 'unannounced', Date.now());
+        rpki.upsert({
+          prefix24: p24,
+          covering: null,
+          originAsn: null,
+          status: 'unannounced',
+          fetchedAt: Date.now()
+        });
         counts.unannounced++;
         console.log(`  ${p24.padEnd(16)} unannounced`);
         continue;
@@ -118,7 +126,13 @@ export async function run(ctx) {
       );
       const status = rv?.data?.status || 'unknown';
       covers.push({ cidr, asn, status });
-      upsert.run(p24, cidr, asn, status, Date.now());
+      rpki.upsert({
+        prefix24: p24,
+        covering: cidr,
+        originAsn: asn,
+        status,
+        fetchedAt: Date.now()
+      });
       counts[status] = (counts[status] || 0) + 1;
       console.log(
         `  ${p24.padEnd(16)} ${cidr.padEnd(20)} AS${asn} → ${status}`
