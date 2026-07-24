@@ -56,10 +56,10 @@ hyperdht-explorer rpki                         >>"$LOG" 2>&1 || log "rpki exited
 # a longer interval (see SCHEDULING.md).
 
 # Regenerate the visualizations so the pages stay current.
-hyperdht-explorer timeline >>"$LOG" 2>&1
-hyperdht-explorer map      >>"$LOG" 2>&1
-hyperdht-explorer ring     >>"$LOG" 2>&1
-hyperdht-explorer summary  >>"$LOG" 2>&1
-hyperdht-explorer topo     >>"$LOG" 2>&1
+hyperdht-explorer render:timeline >>"$LOG" 2>&1
+hyperdht-explorer render:map      >>"$LOG" 2>&1
+hyperdht-explorer render:ring     >>"$LOG" 2>&1
+hyperdht-explorer render:summary  >>"$LOG" 2>&1
+hyperdht-explorer render:topo     >>"$LOG" 2>&1
 
 log "cycle done"

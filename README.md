@@ -21,12 +21,11 @@ npm install                   # project dependencies
 
 It is structured as a single **pear-runtime standalone CLI app** (modeled on
 [hello-pear-bare](https://github.com/holepunchto/hello-pear-bare)): one entry,
-`bin.mjs`, dispatches subcommands that live in `commands/`. Run a command either
-through its `npm run` alias or directly:
+`bin.mjs`, dispatches subcommands that live in `commands/`. Run a command with
+`bare bin.mjs <command>`:
 
 ```sh
-npm run scan -- --for 60       # via npm
-bare bin.mjs scan --for 60     # equivalent, direct
+bare bin.mjs scan --for 60     # crawl for ~60 seconds
 bare bin.mjs help              # list all commands
 ```
 
@@ -47,7 +46,7 @@ pear-runtime updater store. Each render command prints the absolute `file://`
 path of the page it wrote.
 
 **Dev vs production storage.** The standalone binary (production) uses the
-`hyperdht-explorer` dir above; running via `bare bin.mjs` / `npm run …` (dev) uses a
+`hyperdht-explorer` dir above; running via `bare bin.mjs` (dev) uses a
 distinct **`hyperdht-explorer-dev`** sibling dir, so local hacking never mixes with
 installed/scheduled data. Both are durable (not temp). Override either with
 `--storage <dir>` or the `HYPERDHT_EXPLORER_HOME` env var (both take precedence over
@@ -65,39 +64,39 @@ expect — see [SCHEDULING.md](./SCHEDULING.md).
 
 ## Commands
 
-| Command                                                         | What it does                                                                                                   |
-| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `npm run scan`                                                  | Crawl the DHT (random-walk) and record discovered nodes. Runs until stopped.                                   |
-| `npm run geo`                                                   | Geo-locate newly discovered networks via ip-api.com (cached, rate-limited).                                    |
-| `npm run probe`                                                 | Ping every known node to record liveness + round-trip time.                                                    |
-| `npm run seeders -- <pear://link\|preset> [name]`               | Find peers seeding a Pear app and tag their endpoints.                                                         |
-| `npm run observe -- <pear://link\|preset> [name] [--minutes N]` | Seed a public app feed (default) and record connecting (incl. NAT'd) peers; `--disable-seed` for passive lurk. |
-| `npm run render:map`                                            | Render `map.html` — an interactive world map of everything collected.                                          |
-| `npm run render:ring`                                           | Render `ring.html` — a circular projection of the Kademlia keyspace.                                           |
-| `npm run render:timeline`                                       | Render `timeline.html` — how the network evolves over time.                                                    |
-| `npm run storeprobe`                                            | Measure DHT storage reliability (canary put/get persistence).                                                  |
-| `npm run render:summary`                                        | Render `summary.html` — sortable tables of nodes by ASN/operator and /24.                                      |
-| `npm run render:topo -- [--refresh]`                            | Render `topology.html` — BGP/AS interconnection of the hosting networks.                                       |
-| `npm run rpki -- [--refresh]`                                   | Fetch RPKI route-origin validity for the hosting prefixes (RIPEstat).                                          |
-| `npm run stats`                                                 | Print a read-only health report: db size, per-table row counts, freshness.                                     |
+| Command                                                           | What it does                                                                                                   |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `bare bin.mjs scan`                                               | Crawl the DHT (random-walk) and record discovered nodes. Runs until stopped.                                   |
+| `bare bin.mjs geo`                                                | Geo-locate newly discovered networks via ip-api.com (cached, rate-limited).                                    |
+| `bare bin.mjs probe`                                              | Ping every known node to record liveness + round-trip time.                                                    |
+| `bare bin.mjs seeders <pear://link\|preset> [name]`               | Find peers seeding a Pear app and tag their endpoints.                                                         |
+| `bare bin.mjs observe <pear://link\|preset> [name] [--minutes N]` | Seed a public app feed (default) and record connecting (incl. NAT'd) peers; `--disable-seed` for passive lurk. |
+| `bare bin.mjs render:map`                                         | Render `map.html` — an interactive world map of everything collected.                                          |
+| `bare bin.mjs render:ring`                                        | Render `ring.html` — a circular projection of the Kademlia keyspace.                                           |
+| `bare bin.mjs render:timeline`                                    | Render `timeline.html` — how the network evolves over time.                                                    |
+| `bare bin.mjs storeprobe`                                         | Measure DHT storage reliability (canary put/get persistence).                                                  |
+| `bare bin.mjs render:summary`                                     | Render `summary.html` — sortable tables of nodes by ASN/operator and /24.                                      |
+| `bare bin.mjs render:topo [--refresh]`                            | Render `topology.html` — BGP/AS interconnection of the hosting networks.                                       |
+| `bare bin.mjs rpki [--refresh]`                                   | Fetch RPKI route-origin validity for the hosting prefixes (RIPEstat).                                          |
+| `bare bin.mjs stats`                                              | Print a read-only health report: db size, per-table row counts, freshness.                                     |
 
 `seeders` and `observe` accept a **preset** in place of a `pear://` link — a
 short name for a well-known public app, which also becomes the default tag.
 Available presets: `keet`, `pearpass`. Examples:
 
 ```sh
-npm run seeders -- keet         # same as passing Keet's pear:// link, tag 'keet'
-npm run observe -- pearpass     # observe PearPass, tag 'pearpass'
+bare bin.mjs seeders keet       # same as passing Keet's pear:// link, tag 'keet'
+bare bin.mjs observe pearpass   # observe PearPass, tag 'pearpass'
 ```
 
 A typical session:
 
 ```sh
-npm run scan          # let it run a while, then Ctrl-C
-npm run geo
-npm run probe
-npm run seeders -- pear://17pwkcszz18deaccarhrrixhzf1f5ko1b1dz6j3pxhexebutjwzy keet
-npm run render:map    # open the printed file:// URL in a browser
+bare bin.mjs scan     # let it run a while, then Ctrl-C
+bare bin.mjs geo
+bare bin.mjs probe
+bare bin.mjs seeders pear://17pwkcszz18deaccarhrrixhzf1f5ko1b1dz6j3pxhexebutjwzy keet
+bare bin.mjs render:map   # open the printed file:// URL in a browser
 ```
 
 ### Bounded / scheduled scans
@@ -106,8 +105,8 @@ npm run render:map    # open the printed file:// URL in a browser
 built-in limits — both shut down gracefully and print the end-of-run summary:
 
 ```sh
-npm run scan -- --for 60        # crawl ~60 seconds, then stop
-npm run scan -- --queries 50    # crawl until 50 findNode queries, then stop
+bare bin.mjs scan --for 60      # crawl ~60 seconds, then stop
+bare bin.mjs scan --queries 50  # crawl until 50 findNode queries, then stop
 ```
 
 > Don't wrap `scan` in `timeout` — the Bare runtime in use does not deliver
@@ -167,8 +166,8 @@ older than a cutoff (default **72 hours**):
 Control it with `--prune-hours`:
 
 ```sh
-npm run scan -- --prune-hours 168   # keep a week instead of 72h
-npm run scan -- --prune-hours 0     # disable pruning entirely
+bare bin.mjs scan --prune-hours 168   # keep a week instead of 72h
+bare bin.mjs scan --prune-hours 0     # disable pruning entirely
 ```
 
 The number pruned each run is recorded in the scan summary and in the `snapshots`
@@ -245,7 +244,7 @@ and `--max-connectors N`. Use `--refresh` to refetch (cache is reused for a week
 > Caveat: BGP relationships are **inferred and approximate**, and differ between
 > data sources — this is a useful sketch of the underlay, not authoritative routing.
 
-`npm run rpki` adds a **security overlay**: for each hosting prefix it finds the
+`bare bin.mjs rpki` adds a **security overlay**: for each hosting prefix it finds the
 real announced (covering) prefix + origin ASN via RIPEstat `network-info`, then
 checks `rpki-validation` → `valid` / `invalid` / `unknown`, cached per /24 in the
 `rpki` table. The topology page then offers a **colour-by RPKI** toggle: each
@@ -267,7 +266,7 @@ which closest nodes accepted each, then re-polls those nodes at checkpoints up t
 just past hyperdht's record TTL to build a **decay curve**:
 
 ```sh
-npm run storeprobe -- --canaries 5 --checkpoints 0,5,10,15,20,22
+bare bin.mjs storeprobe --canaries 5 --checkpoints 0,5,10,15,20,22
 ```
 
 hyperdht holds records for only **~20 minutes** (`defaultMaxAge`) before they

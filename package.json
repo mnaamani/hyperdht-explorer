@@ -9,7 +9,6 @@
   "bin": "bin.mjs",
   "upgrade": "pear://zn3orhc8fe1qoo48edpu1x8e6of9ufbxg7ixjinigcbfgurgnnny",
   "scripts": {
-    "start": "bare bin.mjs",
     "format": "prettier . --write && lunte --fix",
     "lint": "prettier . --check && lunte && eslint .",
     "make": "node scripts/make.js",

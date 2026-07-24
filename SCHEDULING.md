@@ -137,12 +137,12 @@ sqlite3 ~/Library/Application\ Support/hyperdht-explorer/nodes.db "SELECT COUNT(
 
 ## Refreshing the visualizations
 
-`ops/scheduled-scan.sh` regenerates `timeline` / `map` / `ring` / `summary` / `topo`
-at the end of every cycle (into the app-data `public/` dir). To rebuild them on
-demand instead:
+`ops/scheduled-scan.sh` regenerates `render:timeline` / `render:map` / `render:ring`
+/ `render:summary` / `render:topo` at the end of every cycle (into the app-data
+`public/` dir). To rebuild them on demand instead:
 
 ```sh
-npm run timeline && npm run map && npm run ring
+bare bin.mjs render:timeline && bare bin.mjs render:map && bare bin.mjs render:ring
 ```
 
 Trim those lines at the bottom of `ops/scheduled-scan.sh` for a lighter cycle if you
