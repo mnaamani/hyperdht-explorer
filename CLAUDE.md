@@ -61,6 +61,20 @@ dynamically imports `commands/<name>.mjs` and awaits its exported `run(ctx)`. Ea
 command is otherwise a small single-purpose unit sharing one SQLite database.
 `db.mjs` is the only place the schema lives.
 
+**All SQL lives in `db.mjs` behind a repository layer.** Commands do NOT call
+`db.prepare(...)` — they instantiate a per-table repo factory
+(`nodesRepo`, `observationsRepo`, `geoRepo`, `snapshotsRepo`, `storeProbesRepo`,
+`asTopologyRepo`, `rpkiRepo`) and call its named methods (`nodes.recordSeederEndpoint(...)`,
+`geo.locatedNetworks()`, …). Each factory prepares its statements once per
+instance and reused; the method names read as intent, not SQL. Conventions:
+write methods taking more than a host/port pair take a **single destructured
+options object** (so interchangeable args can't be transposed); placeholders stay
+positional `?` (we don't rely on named-param binding); read helpers feeding a
+JS-side `/24` join return a `Map` keyed by prefix, others return rows/arrays. The
+one sanctioned exception is `commands/stats.mjs`'s generic `COUNT(*)` over a fixed
+table whitelist — documented inline. When adding a query, add a method to the
+relevant repo rather than inlining `db.prepare` in a command.
+
 **Storage lives OUTSIDE the repo.** `paths.mjs` `dataDir()` resolves to bare-storage's
 `persistent()` root (macOS `~/Library/Application Support`, Linux
 `$XDG_DATA_HOME|~/.local/share`, win32 `%APPDATA%`) + an app subdir that DIFFERS by
@@ -167,7 +181,9 @@ one thing to verify when first cutting a binary.
 
 Schema changes go in `db.mjs`: add the column to `CREATE TABLE` **and** add a
 `PRAGMA table_info`-guarded `ALTER TABLE` for existing databases. `nodes.db`
-persists between runs, so always migrate rather than assuming a fresh DB.
+persists between runs, so always migrate rather than assuming a fresh DB. If a
+new column feeds a query, update or add the corresponding repo method (above) in
+the same edit — don't reach around the repo layer with an inline `db.prepare`.
 
 `prefixOf(host)` computes the `/24` key and is the join between `nodes` and
 `geo`. The join is done in JS (read both, group by prefix), not in SQL.

@@ -116,6 +116,7 @@ above). Until a real link is set, leave updates off.
 | `npm run summary`                                               | Render `summary.html` — sortable tables of nodes by ASN/operator and /24.    |
 | `npm run topo -- [--refresh]`                                   | Render `topology.html` — BGP/AS interconnection of the hosting networks.     |
 | `npm run rpki -- [--refresh]`                                   | Fetch RPKI route-origin validity for the hosting prefixes (RIPEstat).        |
+| `npm run stats`                                                 | Print a read-only health report: db size, per-table row counts, freshness.   |
 
 `seeders` and `observe` accept a **preset** in place of a `pear://` link — a
 short name for a well-known public app, which also becomes the default tag.
@@ -371,13 +372,13 @@ crawler appends to at the end of every run, so it fills in as you scan more.
 
 ## Files
 
-| File                          | Role                                                                                  |
-| ----------------------------- | ------------------------------------------------------------------------------------- |
-| `bin.mjs`                     | CLI entry — parses flags, resolves the data dir, dispatches subcommands               |
-| `commands/*.mjs`              | one file per subcommand (`scan`, `geo`, `probe`, `map`, …), each exporting `run(ctx)` |
-| `db.mjs`                      | shared SQLite schema + helpers (`prefixOf`, `parseAs`, `hostKind`, …)                 |
-| `paths.mjs`                   | resolves the OS app-data dir + DB / HTML paths                                        |
-| `app.cjs`, `workers/main.cjs` | pear-runtime OTA self-updater (optional, `--updates`)                                 |
-| `scripts/make.js`             | picks the `bare-build` target for the host platform                                   |
-| `<app-data>/nodes.db`         | SQLite database (generated, outside the repo)                                         |
-| `<app-data>/public/*.html`    | rendered map / ring / timeline / summary / topology (generated)                       |
+| File                          | Role                                                                                                   |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `bin.mjs`                     | CLI entry — parses flags, resolves the data dir, dispatches subcommands                                |
+| `commands/*.mjs`              | one file per subcommand (`scan`, `geo`, `probe`, `map`, …), each exporting `run(ctx)`                  |
+| `db.mjs`                      | shared SQLite schema, per-table repository accessors, + helpers (`prefixOf`, `parseAs`, `hostKind`, …) |
+| `paths.mjs`                   | resolves the OS app-data dir + DB / HTML paths                                                         |
+| `app.cjs`, `workers/main.cjs` | pear-runtime OTA self-updater (optional, `--updates`)                                                  |
+| `scripts/make.js`             | picks the `bare-build` target for the host platform                                                    |
+| `<app-data>/nodes.db`         | SQLite database (generated, outside the repo)                                                          |
+| `<app-data>/public/*.html`    | rendered map / ring / timeline / summary / topology (generated)                                        |
