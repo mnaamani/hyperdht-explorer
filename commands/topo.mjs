@@ -90,7 +90,14 @@ export async function run(ctx) {
         `${RIPE}/asn-neighbours/data.json?resource=AS${asn}&sourceapp=hyperdht-explorer`
       );
       const json = await res.json();
-      const neighbours = json?.data?.neighbours || [];
+      // RIPEstat can answer HTTP 200 with an error/maintenance body (no data),
+      // or throttle (429). Only overwrite the cache on a genuinely valid reply;
+      // otherwise throw so the catch logs it and the previous cache survives —
+      // an unconditional delete here would wipe good neighbours on a hiccup.
+      const neighbours = json?.data?.neighbours;
+      if (!res.ok || !neighbours) {
+        throw new Error(res.ok ? 'no neighbour data' : `HTTP ${res.status}`);
+      }
       asTopo.deleteNeighbours(asn);
       const now = Date.now();
       for (const neighbour of neighbours) {

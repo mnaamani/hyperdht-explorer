@@ -337,6 +337,10 @@ export function observationsRepo(db) {
     ),
     distinctHosts: db.prepare('SELECT DISTINCT host FROM observations'),
     all: db.prepare('SELECT host, app, public_key FROM observations'),
+    allDetailed: db.prepare(
+      `SELECT public_key, host, app, first_seen, last_seen, count
+       FROM observations`
+    ),
     keyCounts: db.prepare('SELECT public_key, count FROM observations')
   };
   return {
@@ -351,6 +355,8 @@ export function observationsRepo(db) {
       stmts.distinctHostsForApp.all(app).map((row) => row.host),
     distinctHosts: () => stmts.distinctHosts.all().map((row) => row.host),
     all: () => stmts.all.all(),
+    // Full observation rows for the summary tables (per-app + app×country).
+    allDetailed: () => stmts.allDetailed.all(),
     keyCounts: () => stmts.keyCounts.all()
   };
 }

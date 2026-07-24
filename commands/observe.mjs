@@ -222,10 +222,21 @@ export async function run(ctx) {
       } catch {}
     }
     await announce();
-    const reAnnounce = globalThis.setInterval(announce, 9 * 60 * 1000); // refresh before the ~20-min TTL
+    // refresh before the ~20-min TTL; self-rescheduling so a slow announce can
+    // never overlap the next one (each tick re-arms only after it resolves).
+    let reAnnounceTimer = globalThis.setTimeout(
+      async function tick() {
+        await announce();
+        if (reAnnounceTimer !== null) {
+          reAnnounceTimer = globalThis.setTimeout(tick, 9 * 60 * 1000);
+        }
+      },
+      9 * 60 * 1000
+    );
 
     return async () => {
-      globalThis.clearInterval(reAnnounce);
+      globalThis.clearTimeout(reAnnounceTimer);
+      reAnnounceTimer = null;
       report();
       try {
         await dht.unannounce(topic, keyPair);
@@ -324,10 +335,10 @@ export async function run(ctx) {
           (tick ? ` · +${dUp}↑/+${dDown}↓ blk this min` : '')
       );
     }
-    const servedTimer = globalThis.setInterval(
-      () => logServed(true),
-      60 * 1000
-    );
+    let servedTimer = globalThis.setTimeout(function tick() {
+      logServed(true);
+      servedTimer = globalThis.setTimeout(tick, 60 * 1000);
+    }, 60 * 1000);
 
     // Sparse by default; best-effort prefetch of the LATEST version so we hold and
     // serve current content (not the full history). Background, non-blocking — a
@@ -345,7 +356,7 @@ export async function run(ctx) {
     })();
 
     return async () => {
-      globalThis.clearInterval(servedTimer);
+      globalThis.clearTimeout(servedTimer);
       logServed(false); // final served tally
       report();
       try {

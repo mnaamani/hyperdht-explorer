@@ -169,6 +169,10 @@ export function run(ctx) {
     `map: ${points.length} networks, ${located}/${totalNodes} nodes located, ${observed.length} observed-peer network(s) across ${observedCountries.length} country(ies)`
   );
 
+  // Serialize for inlining inside a <script> tag: escape '<' so a string value
+  // containing '</script>' can't close the element and inject markup.
+  const jsonSafe = (value) => JSON.stringify(value).replace(/</g, '\\u003c');
+
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -190,9 +194,9 @@ export function run(ctx) {
 <body>
   <div id="map"></div>
   <script>
-    const POINTS = ${JSON.stringify(points)};
-    const OBSERVED = ${JSON.stringify(observed)};
-    const OBSERVED_COUNTRIES = ${JSON.stringify(observedCountries)};
+    const POINTS = ${jsonSafe(points)};
+    const OBSERVED = ${jsonSafe(observed)};
+    const OBSERVED_COUNTRIES = ${jsonSafe(observedCountries)};
     const KIND_COLOR = { residential: '#b6ff3c', mobile: '#4cd9ff', datacenter: '#5f7d6e', proxy: '#ff2bd6', unknown: '#5f7d6e' };
 
     const map = L.map('map', { worldCopyJump: true }).setView([20, 0], 2);
@@ -223,17 +227,28 @@ export function run(ctx) {
       return (s/86400).toFixed(1) + 'd';
     }
 
+    // HTML-escape untrusted strings (whois isp/org/city, app tags) before they
+    // go into popup innerHTML, so operator names can't inject markup/scripts.
+    function esc(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     function popupHtml(p, probeLine) {
-      return '<b>' + (p.city || '?') + ', ' + (p.country || '?') + '</b><br>' +
-        'network <code>' + p.prefix + '.0/24</code><br>' +
-        (p.isp ? p.isp + '<br>' : '') +
-        (p.org && p.org !== p.isp ? '<i>' + p.org + '</i><br>' : '') +
+      return '<b>' + esc(p.city || '?') + ', ' + esc(p.country || '?') + '</b><br>' +
+        'network <code>' + esc(p.prefix) + '.0/24</code><br>' +
+        (p.isp ? esc(p.isp) + '<br>' : '') +
+        (p.org && p.org !== p.isp ? '<i>' + esc(p.org) + '</i><br>' : '') +
         '<hr style="margin:4px 0">' +
         p.nodes + ' node(s) &middot; ' + p.hits + ' sightings<br>' +
         'up to ' + p.maxSessions + ' session(s) &middot; last seen ' + ago(p.lastSeen) + ' ago<br>' +
         'uptime ' + dur(p.lastSeen - p.firstSeen) + ' (first→last seen)<br>' +
         '<b>' + probeLine + '</b>' +
-        (p.apps.length ? '<br>★ seeds: <b>' + p.apps.join(', ') + '</b>' : '');
+        (p.apps.length ? '<br>★ seeds: <b>' + esc(p.apps.join(', ')) + '</b>' : '');
     }
 
     const cluster = L.markerClusterGroup({ maxClusterRadius: 40, spiderfyOnMaxZoom: true });
@@ -275,11 +290,11 @@ export function run(ctx) {
         radius: 5 + Math.min(10, Math.log2(o.peers + 1) * 2.5),
         color: '#ff9f1c', fillColor: '#ff9f1c', fillOpacity: 0.55, weight: 1.5
       }).bindPopup(
-        '<b>' + (o.city || '?') + ', ' + (o.country || '?') + '</b><br>' +
-        'network <code>' + o.prefix + '.0/24</code> &middot; ' + o.kind + '<br>' +
+        '<b>' + esc(o.city || '?') + ', ' + esc(o.country || '?') + '</b><br>' +
+        'network <code>' + esc(o.prefix) + '.0/24</code> &middot; ' + esc(o.kind) + '<br>' +
         '<hr style="margin:4px 0">' +
         '👁 ' + o.peers + ' observed participant(s)<br>' +
-        (o.apps.length ? 'app: <b>' + o.apps.join(', ') + '</b>' : '')
+        (o.apps.length ? 'app: <b>' + esc(o.apps.join(', ')) + '</b>' : '')
       ).addTo(observedLayer);
     }
 
@@ -291,10 +306,10 @@ export function run(ctx) {
         radius: 8 + Math.min(24, Math.log2(c.peers + 1) * 4),
         color: col, fillColor: col, fillOpacity: 0.35, weight: 2
       }).bindPopup(
-        '<b>' + c.country + '</b><br>' +
+        '<b>' + esc(c.country) + '</b><br>' +
         '👁 ' + c.peers + ' participant(s) &middot; ' + c.nets + ' /24(s)<br>' +
-        'dominant type: <b>' + c.kind + '</b><br>' +
-        (c.apps.length ? 'app: <b>' + c.apps.join(', ') + '</b>' : '')
+        'dominant type: <b>' + esc(c.kind) + '</b><br>' +
+        (c.apps.length ? 'app: <b>' + esc(c.apps.join(', ')) + '</b>' : '')
       ).addTo(observedCountryLayer);
     }
     map.addLayer(observedCountryLayer); // overview on; per-/24 detail is opt-in below
