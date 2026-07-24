@@ -43,6 +43,13 @@ export async function run(ctx) {
     .filter((num) => !Number.isNaN(num))
     .sort((a, b) => a - b);
 
+  if (!checkpoints.length) {
+    console.error(
+      'no valid --checkpoints; give comma-separated minutes, e.g. 0,5,10,15,20,22'
+    );
+    return;
+  }
+
   const sleep = (ms) =>
     new Promise((resolve) => globalThis.setTimeout(resolve, ms));
   const timeout = (ms) =>
@@ -94,6 +101,15 @@ export async function run(ctx) {
     }
   }
   const live = canaries.filter((canary) => canary.target);
+  if (!live.length) {
+    // Every put failed (DHT unreachable/partitioned). Don't burn the ~22-min
+    // decay walk measuring nothing, and don't record a misleading all-zero row.
+    console.error(
+      `\nall ${CANARIES} puts failed — DHT unreachable; skipping the decay walk.`
+    );
+    await dht.destroy();
+    return;
+  }
   const t0 = Date.now();
 
   // network retrievability right after put

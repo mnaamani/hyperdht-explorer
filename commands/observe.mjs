@@ -64,7 +64,16 @@ export async function run(ctx) {
     } else if (a === '--seed') {
       SEED = true;
     } else if (a === '--minutes') {
-      MINUTES = Number(rest[++i]);
+      // A missing/non-numeric value would make MINUTES NaN, and
+      // setTimeout(shutdown, NaN) fires immediately — tearing down right after
+      // setup. Keep the default (and warn) instead. Bites a cron wrapper that
+      // passes a blank OBSERVE_MINUTES.
+      const val = Number(rest[++i]);
+      if (Number.isFinite(val) && val > 0) {
+        MINUTES = val;
+      } else {
+        console.error(`ignoring invalid --minutes; using ${MINUTES}`);
+      }
     } else if (!a.startsWith('--')) {
       positional.push(a);
     }

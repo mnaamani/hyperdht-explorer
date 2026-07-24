@@ -35,15 +35,16 @@ export async function run(ctx) {
 
   async function probe(node) {
     const t0 = Date.now();
+    let timer = null;
     try {
       await Promise.race([
         dht.ping({ host: node.host, port: node.port }),
-        new Promise((_, reject) =>
-          globalThis.setTimeout(
+        new Promise((_, reject) => {
+          timer = globalThis.setTimeout(
             () => reject(new Error('timeout')),
             PING_TIMEOUT
-          )
-        )
+          );
+        })
       ]);
       const rtt = Date.now() - t0;
       nodes.markAlive({
@@ -57,6 +58,9 @@ export async function run(ctx) {
     } catch {
       nodes.markDead({ host: node.host, port: node.port, at: Date.now() });
       dead++;
+    } finally {
+      // clear the losing race timer so a fast ping doesn't leave it armed
+      globalThis.clearTimeout(timer);
     }
     if (++done % 50 === 0) {
       console.log(

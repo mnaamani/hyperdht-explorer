@@ -100,7 +100,20 @@ export async function run(ctx) {
       continue;
     }
 
-    const results = await res.json();
+    // ip-api's free HTTP tier can answer 5xx / an HTML error page under load;
+    // guard both the status and the parse so one bad batch doesn't throw out of
+    // run() (skipping db.close()). Break keeps already-upserted batches.
+    if (!res.ok) {
+      console.error(`batch ${i / BATCH_SIZE + 1} failed: HTTP ${res.status}`);
+      break;
+    }
+    let results;
+    try {
+      results = await res.json();
+    } catch (err) {
+      console.error(`batch ${i / BATCH_SIZE + 1} bad response: ${err.message}`);
+      break;
+    }
     const now = Date.now();
     for (let j = 0; j < chunk.length; j++) {
       const [prefix] = chunk[j];

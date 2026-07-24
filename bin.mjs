@@ -78,6 +78,13 @@ for (let i = 0; i < raw.length; i++) {
     updates = true;
   } else if (a === '--storage') {
     storage = raw[++i];
+    // Reject a missing value or a following flag — otherwise `--storage` alone
+    // silently falls back to the default dir, and `--storage --updates` would
+    // resolve to a relative `./--updates/` in cwd (never write into the repo).
+    if (!storage || storage.startsWith('--')) {
+      console.error('--storage requires a directory path');
+      Bare.exit(1);
+    }
   } else {
     rest.push(a);
   }

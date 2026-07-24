@@ -301,7 +301,12 @@ export function nodesRepo(db) {
         .all()
         .map((row) => row.rtt_ms)
         .sort((left, right) => left - right);
-      return rtts.length ? rtts[rtts.length >> 1] : null;
+      if (!rtts.length) {
+        return null;
+      }
+      const mid = rtts.length >> 1;
+      // true median: average the two middle values for an even-length set
+      return rtts.length % 2 ? rtts[mid] : (rtts[mid - 1] + rtts[mid]) / 2;
     },
     breakdown: () => stmts.breakdown.get(),
     hosts: () => stmts.hosts.all().map((row) => row.host),
