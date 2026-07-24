@@ -53,13 +53,16 @@ OTA updater) over a framed IPC pipe — the daemon generalizes exactly that patt
 
 ## Benevolent seeding — give back, don't just observe
 
-`observe` today is a **passive lurker**: it announces under a public topic's
-discovery key and records who connects, but serves nothing. That's mildly
-extractive — peers connect to us expecting to replicate, and we don't fulfil it. The
-fix is to **actually seed and serve the public app-update feed** we're observing,
-turning us into a real, useful replica. Observations then become a _byproduct_ of
-legitimately participating rather than the whole point, and a real seeder earns
-richer, longer-lived connections → a better, less biased health signal.
+> **Status: shipped as the default.** `observe` now seeds by default (pass
+> `--disable-seed` to fall back to the passive lurker). The rationale below is why.
+
+A **passive lurker** — announce under a public topic's discovery key and record who
+connects, but serve nothing — is mildly extractive: peers connect to us expecting to
+replicate, and we don't fulfil it. The fix is to **actually seed and serve the public
+app-update feed** we're observing, turning us into a real, useful replica.
+Observations then become a _byproduct_ of legitimately participating rather than the
+whole point, and a real seeder earns richer, longer-lived connections → a better,
+less biased health signal.
 
 **The bright line (non-negotiable):** seed **only the public app-update feed** — the
 `pear://` link's Hyperdrive, which is _designed_ to be reseeded by every install.

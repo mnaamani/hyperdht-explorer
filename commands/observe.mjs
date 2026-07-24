@@ -25,21 +25,21 @@ import { dataDir, ensureDirs } from '../paths.mjs';
 // often NAT'd/ephemeral participants that a findNode crawl can never see —
 // because we observe who *connects*, not who is merely in the routing table.
 //
-//   bare bin.mjs observe <pear://link | hypercore-key | preset> [app-name] [--minutes N] [--seed]
+//   bare bin.mjs observe <pear://link | hypercore-key | preset> [app-name] [--minutes N] [--disable-seed]
 //
 // A bare preset name (e.g. `observe keet`, see APP_PRESETS in db.mjs) expands to
 // its link and supplies the default app tag.
 //
 // Two modes:
-//   * default (lurker) — announce, record connecting peers, then close politely.
-//     Ephemeral identity, serves nothing. Mildly extractive but zero footprint.
-//   * --seed — actually REPLICATE AND SERVE the app's public update drive: join its
-//     discovery key as server+client over a Corestore, serve blocks to peers, and
-//     best-effort prefetch the latest version so we serve current content. Uses a
-//     STABLE, persisted identity (a real seeder has a steady footprint). Observation
-//     recording is unchanged — it just becomes a byproduct of genuinely participating.
+//   * default (seed) — actually REPLICATE AND SERVE the app's public update drive:
+//     join its discovery key as server+client over a Corestore, serve blocks to
+//     peers, and best-effort prefetch the latest version so we serve current content.
+//     Uses a STABLE, persisted identity (a real seeder has a steady footprint).
+//     Observation recording is a byproduct of genuinely participating.
+//   * --disable-seed (lurker) — announce, record connecting peers, then close
+//     politely. Ephemeral identity, serves nothing. Mildly extractive, zero footprint.
 //
-// THE BRIGHT LINE (--seed): seed ONLY public app-update feeds — the `pear://` link's
+// THE BRIGHT LINE (seed mode): seed ONLY public app-update feeds — the `pear://` link's
 // drive, which is designed to be reseeded by every install. Hypercore is signed by
 // the app key, so we only ever store/serve authentic data. NEVER private/room data
 // (Keet chat rooms etc.); those aren't discoverable and are out of scope.
@@ -53,11 +53,15 @@ export async function run(ctx) {
   // --minutes) is consumed, not mistaken for a positional like the app-name.
   const positional = [];
   let MINUTES = 10;
-  let SEED = false;
+  // Seed by default (a real, benevolent seeder); --disable-seed drops to the
+  // passive lurker. `--seed` is still accepted (now redundant) for old callers.
+  let SEED = true;
   const rest = ctx.argv.slice(2);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
-    if (a === '--seed') {
+    if (a === '--disable-seed') {
+      SEED = false;
+    } else if (a === '--seed') {
       SEED = true;
     } else if (a === '--minutes') {
       MINUTES = Number(rest[++i]);
@@ -70,7 +74,7 @@ export async function run(ctx) {
 
   if (!arg) {
     console.error(
-      'usage: bare bin.mjs observe <pear://link | hypercore-key | preset> [app-name] [--minutes N] [--seed]'
+      'usage: bare bin.mjs observe <pear://link | hypercore-key | preset> [app-name] [--minutes N] [--disable-seed]'
     );
     console.error(`presets: ${Object.keys(APP_PRESETS).join(', ')}`);
     process.exit(1);

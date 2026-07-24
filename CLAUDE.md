@@ -84,9 +84,9 @@ runtime: a standalone production binary uses `…/hyperdht-explorer`, while dev 
 data never mix. Precedence: `--storage` > `HYPERDHT_EXPLORER_HOME` > dev/prod default.
 `bin.mjs` resolves the dir once (`storage || dataDir()`) and exports it as
 `HYPERDHT_EXPLORER_HOME` so every command's `paths.mjs` agrees. It holds `nodes.db`,
-`public/*.html`, the pear-runtime updater store, and — once `observe --seed` runs —
-`seeder.seed` (the stable seeder identity) and `seed-store/` (the Corestore of seeded
-drive blocks). `openDb()` defaults to
+`public/*.html`, the pear-runtime updater store, and — once `observe` runs (it seeds
+by default) — `seeder.seed` (the stable seeder identity) and `seed-store/` (the
+Corestore of seeded drive blocks). `openDb()` defaults to
 `paths.dbPath()` and calls `ensureDirs()`; render commands write to
 `paths.htmlPath('<name>.html')`. Never write outputs into the repo cwd. The `ops/`
 cron wrappers therefore require the **standalone** binary — running under `bare`
@@ -137,19 +137,23 @@ one thing to verify when first cutting a binary.
   into the `observations` table via `conn.rawStream.remoteHost/remotePort`; self-timed
   (`--minutes`); HEALTH-ONLY (aggregate, public topics, never deanonymize — see the
   `project-intent-health-not-deanon` memory).
-  - **default (lurker):** raw `hyperdht`, **ephemeral** keypair — announce under the
-    topic's discovery key, record, `conn.end()`. Serves nothing.
-  - **`--seed`:** the D1 "benevolent seeding" step of `PROPOSAL-federation.md` — actually
-    replicate + serve the app's **public** update drive. Hyperswarm + Corestore + Hyperdrive,
-    join `drive.discoveryKey` as **server+client**, `store.replicate(conn)` per connection,
-    best-effort background prefetch of the **latest** version (sparse, not full history).
-    Uses a **stable** identity persisted as a 32-byte seed (`<dataDir>/seeder.seed` →
-    `crypto.keyPair(seed)`); corestore lives at `<dataDir>/seed-store`. BRIGHT LINE:
+  - **default (seed):** the D1 "benevolent seeding" step of `PROPOSAL-federation.md` —
+    actually replicate + serve the app's **public** update drive. Hyperswarm + Corestore +
+    Hyperdrive, join `drive.discoveryKey` as **server+client**, `store.replicate(conn)` per
+    connection, best-effort background prefetch of the **latest** version (sparse, not full
+    history). Uses a **stable** identity persisted as a 32-byte seed (`<dataDir>/seeder.seed`
+    → `crypto.keyPair(seed)`); corestore lives at `<dataDir>/seed-store`. BRIGHT LINE:
     seed only public app-update feeds (signed by the app key ⇒ only authentic data),
     never private/room data. `hyperdrive` is a direct dep for this; Corestore's
     rocksdb-native backend has `.bare` prebuilds so it runs under Bare.
+  - **`--disable-seed` (lurker):** raw `hyperdht`, **ephemeral** keypair — announce under
+    the topic's discovery key, record, `conn.end()`. Serves nothing. (`--seed` is still
+    accepted as a redundant no-op for old callers, since seeding is now the default.)
 
-    Flag parsing consumes `--minutes <n>`'s value (don't let it leak into the app-name positional).
+    Flag parsing consumes `--minutes <n>`'s value (don't let it leak into the app-name
+    positional); `--disable-seed`/`--seed` are booleans. Because seeding is the default,
+    `ops/scheduled-observe.sh` now seeds on its cron schedule (writes `seed-store/` + uses
+    replication bandwidth) unless it passes `--disable-seed`.
 
   - `ops/scheduled-observe.sh` runs it on a separate cron schedule (env:
     OBSERVE_LINK/OBSERVE_APP/OBSERVE_MINUTES).

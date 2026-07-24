@@ -102,21 +102,21 @@ above). Until a real link is set, leave updates off.
 
 ## Commands
 
-| Command                                                         | What it does                                                                 |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `npm run scan`                                                  | Crawl the DHT (random-walk) and record discovered nodes. Runs until stopped. |
-| `npm run geo`                                                   | Geo-locate newly discovered networks via ip-api.com (cached, rate-limited).  |
-| `npm run probe`                                                 | Ping every known node to record liveness + round-trip time.                  |
-| `npm run seeders -- <pear://link\|preset> [name]`               | Find peers seeding a Pear app and tag their endpoints.                       |
-| `npm run observe -- <pear://link\|preset> [name] [--minutes N]` | Seed a public topic and record connecting (incl. NAT'd) peers.               |
-| `npm run map`                                                   | Render `map.html` — an interactive world map of everything collected.        |
-| `npm run ring`                                                  | Render `ring.html` — a circular projection of the Kademlia keyspace.         |
-| `npm run timeline`                                              | Render `timeline.html` — how the network evolves over time.                  |
-| `npm run storeprobe`                                            | Measure DHT storage reliability (canary put/get persistence).                |
-| `npm run summary`                                               | Render `summary.html` — sortable tables of nodes by ASN/operator and /24.    |
-| `npm run topo -- [--refresh]`                                   | Render `topology.html` — BGP/AS interconnection of the hosting networks.     |
-| `npm run rpki -- [--refresh]`                                   | Fetch RPKI route-origin validity for the hosting prefixes (RIPEstat).        |
-| `npm run stats`                                                 | Print a read-only health report: db size, per-table row counts, freshness.   |
+| Command                                                         | What it does                                                                                                   |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `npm run scan`                                                  | Crawl the DHT (random-walk) and record discovered nodes. Runs until stopped.                                   |
+| `npm run geo`                                                   | Geo-locate newly discovered networks via ip-api.com (cached, rate-limited).                                    |
+| `npm run probe`                                                 | Ping every known node to record liveness + round-trip time.                                                    |
+| `npm run seeders -- <pear://link\|preset> [name]`               | Find peers seeding a Pear app and tag their endpoints.                                                         |
+| `npm run observe -- <pear://link\|preset> [name] [--minutes N]` | Seed a public app feed (default) and record connecting (incl. NAT'd) peers; `--disable-seed` for passive lurk. |
+| `npm run map`                                                   | Render `map.html` — an interactive world map of everything collected.                                          |
+| `npm run ring`                                                  | Render `ring.html` — a circular projection of the Kademlia keyspace.                                           |
+| `npm run timeline`                                              | Render `timeline.html` — how the network evolves over time.                                                    |
+| `npm run storeprobe`                                            | Measure DHT storage reliability (canary put/get persistence).                                                  |
+| `npm run summary`                                               | Render `summary.html` — sortable tables of nodes by ASN/operator and /24.                                      |
+| `npm run topo -- [--refresh]`                                   | Render `topology.html` — BGP/AS interconnection of the hosting networks.                                       |
+| `npm run rpki -- [--refresh]`                                   | Fetch RPKI route-origin validity for the hosting prefixes (RIPEstat).                                          |
+| `npm run stats`                                                 | Print a read-only health report: db size, per-table row counts, freshness.                                     |
 
 `seeders` and `observe` accept a **preset** in place of a `pear://` link — a
 short name for a well-known public app, which also becomes the default tag.
