@@ -2,8 +2,9 @@
 #
 # One seed-and-listen observation session, for cron. Announces under a PUBLIC
 # topic and records connecting (incl. NAT'd) participants for OBSERVE_MINUTES,
-# then refreshes the map + timeline so the observed-participant markers/trend stay
-# current. Scheduled SEPARATELY from the 15-min scan cycle (it's a long listener).
+# then geo-classifies any newly observed /24s. The render:* pages pick the new
+# data up on the next scan cycle. Scheduled SEPARATELY from the 15-min scan
+# cycle (it's a long listener).
 #
 # Health monitoring only — aggregate participation, never individual tracking.
 # Use only on public topics/feeds you may legitimately peer with.
