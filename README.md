@@ -282,9 +282,9 @@ Results — put success, retrievability, the replica decay curve, and persistenc
 across the TTL — go to the `store_probes` table and are charted on the **timeline**
 page (storage-health trend + a "replica decay" chart with the ~20-min expiry
 marked). Because a run spans the TTL, schedule it **separately** from the 15-min
-scan cycle (see [SCHEDULING.md](./SCHEDULING.md)). A future
-[federation proposal](./PROPOSAL-federation.md) covers using these same primitives
-to make hyperdht-explorer itself distributed.
+scan cycle (see [SCHEDULING.md](./SCHEDULING.md)). The
+[roadmap](./ROADMAP.md) covers using these same primitives to make
+hyperdht-explorer itself distributed.
 
 ### Reading the charts
 

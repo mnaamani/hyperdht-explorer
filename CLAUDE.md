@@ -139,8 +139,7 @@ one thing to verify when first cutting a binary.
   into the `observations` table via `conn.rawStream.remoteHost/remotePort`; self-timed
   (`--minutes`); HEALTH-ONLY (aggregate, public topics, never deanonymize — see the
   `project-intent-health-not-deanon` memory).
-  - **default (seed):** the D1 "benevolent seeding" step of `PROPOSAL-federation.md` —
-    actually replicate + serve the app's **public** update drive. Hyperswarm + Corestore +
+  - **default (seed):** actually replicate + serve the app's **public** update drive. Hyperswarm + Corestore +
     Hyperdrive, join `drive.discoveryKey` as **server+client**, `store.replicate(conn)` per
     connection, best-effort background prefetch of the **latest** version (sparse, not full
     history). Uses a **stable** identity persisted as a 32-byte seed (`<dataDir>/seeder.seed`
@@ -163,8 +162,9 @@ one thing to verify when first cutting a binary.
 - `hostKind(geoRow)` (db.mjs) classifies a network datacenter/mobile/proxy/residential
   from ip-api's `hosting`/`mobile`/`proxy` flags (geo.mjs fetches them; backfills older
   rows; `--refresh` forces all). Surfaced as the summary "Type" column + map colours.
-- Long-running daemon (worker-backed), benevolent seeding of public app feeds, and a
-  federated explorer are all deferred — see `PROPOSAL-federation.md`.
+- A long-running daemon (worker-backed), resource governance for sustained seeding
+  (allowlist, disk/bandwidth caps, eviction), and a federated explorer are all
+  deferred — see `ROADMAP.md`.
 
 ### `nodes.db` schema (see `db.mjs`)
 
