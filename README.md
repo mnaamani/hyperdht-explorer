@@ -8,6 +8,10 @@ the keyspace, recording every node it meets into SQLite, geo-locating them,
 probing them for liveness, and plotting them on an interactive world map. It can
 also look up the peers seeding a specific Pear application by its `pear://` link.
 
+**Live reports: [hyperdht-explorer.com](https://www.hyperdht-explorer.com)** — the
+generated pages (summary, world map, keyspace ring, timeline, AS topology) from a
+scheduled crawl.
+
 ## Requirements
 
 This project runs on the **[Bare](https://github.com/holepunchto/bare) runtime**,
@@ -344,3 +348,7 @@ crawler appends to at the end of every run, so it fills in as you scan more.
 | `scripts/make.js`             | picks the `bare-build` target for the host platform                                                    |
 | `<app-data>/nodes.db`         | SQLite database (generated, outside the repo)                                                          |
 | `<app-data>/public/*.html`    | rendered map / ring / timeline / summary / topology (generated)                                        |
+
+## License
+
+[Apache License 2.0](./LICENSE) © 2026 Mokhtar Naamani.
