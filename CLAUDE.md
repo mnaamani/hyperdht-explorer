@@ -103,7 +103,9 @@ one thing to verify when first cutting a binary.
 - `commands/geo.mjs` (`geo`) — ip-api.com batch geo lookup, one query per `/24`.
 - `commands/probe.mjs` (`probe`) — `dht.ping` for liveness + RTT.
 - `commands/seeders.mjs` (`seeders`) — `pear://`/key → discovery key → `dht.lookup` →
-  tag announcer relay endpoints in `app_seeder`.
+  tag announcer relay endpoints in `app_seeder`. `ops/scheduled-seeders.sh` runs it
+  on its own cron schedule (own lock, env: SEEDERS_TARGET/SEEDERS_APP), kept out of
+  the 15-min scan cycle so a slow lookup can't delay a snapshot.
 - `commands/map.mjs` (`render:map`) — emits self-contained `map.html` (Leaflet, data inlined).
 - `commands/ring.mjs` (`render:ring`) — emits `ring.html`, an offline inline-SVG circular
   projection of the keyspace (no CDN).

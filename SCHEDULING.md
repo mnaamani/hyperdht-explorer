@@ -110,6 +110,31 @@ OBSERVE_MINUTES=20              # listen window (keep < the cron interval)
 Health monitoring only — aggregate participation, never individual tracking; use
 only on public topics/feeds you may legitimately peer with.
 
+### Seeder census (Keet, separate schedule)
+
+`seeders` looks up the announcers of a public app-update feed and records their
+relay endpoints into `nodes.db` tagged `app_seeder`, so they flow into the
+geo/probe/map pipeline. A lookup ends on its own (usually well under a minute),
+but [`ops/scheduled-seeders.sh`](./ops/scheduled-seeders.sh) is kept out of the
+15-min scan cycle (own lock) so a slow lookup can never delay a snapshot. It
+geo-classifies any new seeder /24s afterwards.
+
+```cron
+# Keet seeder census every 30 minutes
+*/30 * * * * /Users/mokhtar/dht-explorer/client-app/ops/scheduled-seeders.sh
+```
+
+Configure via env (defaults shown):
+
+```sh
+SEEDERS_TARGET=keet   # preset name, pear://link, or raw hypercore key
+SEEDERS_APP=          # app_seeder tag; empty => the preset name ('keet')
+```
+
+Seeders are announcers of the **public** app-update feed — a census of online
+installs. Private rooms are not enumerable and are never touched; seeders ≠ all
+installs (offline or non-announcing peers don't show up).
+
 ### Other intervals
 
 ```cron
