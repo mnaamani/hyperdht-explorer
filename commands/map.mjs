@@ -187,6 +187,15 @@ export function run(ctx) {
   <style>
     html, body, #map { height: 100%; margin: 0; background: #1a1a1a; }
     .legend { background: #fff; padding: 8px 10px; border-radius: 4px; font: 12px sans-serif; line-height: 18px; }
+    /* one view at a time: the layer control holds radios, so give each option
+       room for a title plus a line explaining what it actually plots */
+    .leaflet-control-layers-base label { margin-bottom: 6px; }
+    .leaflet-control-layers-base label > span { display: flex; gap: 6px; }
+    .lyr { display: block; font: 12px sans-serif; max-width: 230px; }
+    .lyr b { display: block; }
+    .lyr small { color: #666; font-size: 11px; line-height: 14px; display: block; }
+    .lyr-hint { font: 11px sans-serif; color: #666; padding: 2px 4px 6px;
+      max-width: 230px; line-height: 14px; }
     .legend i { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border-radius: 50%; }
     .leaflet-popup-content { font: 12px/1.4 sans-serif; }
   </style>
@@ -271,15 +280,18 @@ export function run(ctx) {
         radius: r, color: c, fillColor: c, fillOpacity: dead ? 0.3 : 0.6, weight: 1
       }).bindPopup(popupHtml(p, probeLine)).addTo(cluster);
 
-      // app seeders get a bright magenta highlight ring on their own layer
+      // App seeders on their own layer. Since views are exclusive, this layer
+      // has to stand alone: draw a filled dot (stability colour, as in the base
+      // view) with a magenta outline marking it as a seeder — not a bare ring,
+      // which would have nothing underneath it.
       if (p.apps.length) {
         L.circleMarker([p.lat, p.lon], {
-          radius: r + 5, color: '#ff2bd6', weight: 3, fill: false
+          radius: r, color: '#ff2bd6', fillColor: c,
+          fillOpacity: dead ? 0.3 : 0.75, weight: 2
         }).bindPopup(popupHtml(p, probeLine)).addTo(seederLayer);
       }
     }
-    map.addLayer(cluster);
-    map.addLayer(seederLayer);
+    map.addLayer(cluster); // the only layer on by default — plain DHT nodes
 
     // observed participants (observe.mjs) — orange diamonds, own toggleable layer
     const observedLayer = L.layerGroup();
@@ -312,15 +324,31 @@ export function run(ctx) {
         (c.apps.length ? 'app: <b>' + esc(c.apps.join(', ')) + '</b>' : '')
       ).addTo(observedCountryLayer);
     }
-    map.addLayer(observedCountryLayer); // overview on; per-/24 detail is opt-in below
-
     const seederCount = POINTS.filter((p) => p.apps.length).length;
-    L.control.layers(null, {
-      'All networks': cluster,
-      ['★ App seeders (' + seederCount + ')']: seederLayer,
-      ['🌐 Observed by country (' + OBSERVED_COUNTRIES.length + ')']: observedCountryLayer,
-      ['👁 Observed /24 detail (' + observedPeers + ')']: observedLayer
-    }, { collapsed: false }).addTo(map);
+
+    // One view at a time: these go in the control's BASE-layer slot, so Leaflet
+    // renders them as radios and swaps layers rather than stacking them. The
+    // crawl's plain DHT nodes are the default view; the app/observation views
+    // are opt-in because they answer a different question.
+    function label(title, desc) {
+      return '<span class="lyr"><b>' + title + '</b><small>' + desc + '</small></span>';
+    }
+    const views = {};
+    views[label('DHT routing nodes (' + POINTS.length + ' networks)',
+      'Every /24 the random-walk crawl has met. Colour = sessions seen, size = nodes.')] = cluster;
+    views[label('★ App seeders (' + seederCount + ' networks)',
+      'Only networks announcing a public app-update feed — relay endpoints of online installs.')] = seederLayer;
+    views[label('🌐 Observed peers by country (' + OBSERVED_COUNTRIES.length + ')',
+      'Peers that connected to us during observe runs, aggregated per country. Size = participants.')] = observedCountryLayer;
+    views[label('👁 Observed peers by /24 (' + observedPeers + ')',
+      'The same observed peers at network detail, one dot per /24 instead of per country.')] = observedLayer;
+
+    const layerControl = L.control.layers(views, null, { collapsed: false });
+    layerControl.addTo(map);
+
+    const hint = L.DomUtil.create('div', 'lyr-hint');
+    hint.textContent = 'Pick one view — the map shows a single layer at a time.';
+    layerControl.getContainer().appendChild(hint);
 
     const legend = L.control({ position: 'bottomright' });
     legend.onAdd = function () {
@@ -332,7 +360,7 @@ export function run(ctx) {
         '<i style="background:#e67e22"></i>2<br>' +
         '<i style="background:#e74c3c"></i>1 (transient)<br>' +
         '<i style="background:#777"></i>unreachable<br>' +
-        '<i style="background:none;border:2px solid #ff2bd6"></i>app seeder<br>' +
+        '<i style="background:#a3e635;border:2px solid #ff2bd6"></i>app seeder (fill = sessions)<br>' +
         '<i style="background:#ff9f1c"></i>observed /24 (detail)<br>' +
         '<i style="background:#b6ff3c"></i>observed by country<br>' +
         '<span style="color:#5f7d6e;font-size:11px">↑ size = participants, colour = host-type</span>';
