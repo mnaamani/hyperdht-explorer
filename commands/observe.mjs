@@ -12,7 +12,6 @@ import {
   openDb,
   observationsRepo,
   geoRepo,
-  prefixOf,
   hostKind,
   isPrivateIp,
   APP_PRESETS,
@@ -25,7 +24,7 @@ import { dataDir, ensureDirs } from '../paths.mjs';
 // often NAT'd/ephemeral participants that a findNode crawl can never see —
 // because we observe who *connects*, not who is merely in the routing table.
 //
-//   bare bin.mjs observe <pear://link | hypercore-key | preset> [app-name] [--minutes N] [--disable-seed]
+//   bare bin.mjs observe <pear://link | hypercore-key | preset> [app-name] [--minutes N] [--prune-days N] [--disable-seed]
 //
 // A bare preset name (e.g. `observe keet`, see APP_PRESETS in db.mjs) expands to
 // its link and supplies the default app tag.
@@ -56,6 +55,10 @@ export async function run(ctx) {
   // Seed by default (a real, benevolent seeder); --disable-seed drops to the
   // passive lurker. `--seed` is still accepted (now redundant) for old callers.
   let SEED = true;
+  // Retention for the observations table: it is the one table that would
+  // otherwise grow forever (scan prunes `nodes`, the geo cache is bounded by
+  // /24 reuse). 0 disables pruning.
+  let PRUNE_DAYS = 30;
   const rest = ctx.argv.slice(2);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -74,6 +77,15 @@ export async function run(ctx) {
       } else {
         console.error(`ignoring invalid --minutes; using ${MINUTES}`);
       }
+    } else if (a === '--prune-days') {
+      // Same guard as --minutes: a blank value from a cron wrapper must not
+      // turn into NaN (which would compare false and silently never prune).
+      const val = Number(rest[++i]);
+      if (Number.isFinite(val) && val >= 0) {
+        PRUNE_DAYS = val;
+      } else {
+        console.error(`ignoring invalid --prune-days; using ${PRUNE_DAYS}`);
+      }
     } else if (!a.startsWith('--')) {
       positional.push(a);
     }
@@ -83,7 +95,7 @@ export async function run(ctx) {
 
   if (!arg) {
     console.error(
-      'usage: bare bin.mjs observe <pear://link | hypercore-key | preset> [app-name] [--minutes N] [--disable-seed]'
+      'usage: bare bin.mjs observe <pear://link | hypercore-key | preset> [app-name] [--minutes N] [--prune-days N] [--disable-seed]'
     );
     console.error(`presets: ${Object.keys(APP_PRESETS).join(', ')}`);
     process.exit(1);
@@ -101,6 +113,18 @@ export async function run(ctx) {
   const db = openDb();
   const observations = observationsRepo(db);
   const geo = geoRepo(db);
+
+  // Retention pass first, so everything below (priorKeys, the report) reflects
+  // the retained window rather than rows that are about to be dropped.
+  if (PRUNE_DAYS > 0) {
+    const cutoff = Date.now() - PRUNE_DAYS * 86400 * 1000;
+    const dropped = observations.pruneStaleBefore(cutoff);
+    if (dropped) {
+      console.log(
+        `pruned ${dropped} observation(s) not seen in ${PRUNE_DAYS}d`
+      );
+    }
+  }
 
   const seen = new Set(); // host:port connections seen this session
 
@@ -128,7 +152,6 @@ export async function run(ctx) {
       observations.record({
         publicKey: pk,
         host,
-        port,
         app: appName,
         at: Date.now()
       });
@@ -162,8 +185,7 @@ export async function run(ctx) {
 
   function report() {
     const allTimeKeys = observations.countDistinctForApp(appName);
-    const hosts = observations.distinctHostsForApp(appName);
-    const prefixes = new Set(hosts.map(prefixOf));
+    const prefixes = new Set(observations.distinctPrefixesForApp(appName));
     // classify the /24s we already have geo for
     const networks = geo.locatedNetworks();
     const kinds = {};

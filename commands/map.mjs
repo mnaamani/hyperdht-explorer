@@ -86,7 +86,7 @@ export function run(ctx) {
   // observed participants (observe.mjs) grouped by /24
   const obs = new Map();
   for (const obsRow of observations.all()) {
-    const geoRow = geo.get(prefixOf(obsRow.host));
+    const geoRow = geo.get(obsRow.prefix24);
     if (!geoRow) {
       continue;
     }

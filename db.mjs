@@ -51,15 +51,19 @@ export function openDb(path = dbPath()) {
 
     -- Peers observed CONNECTING to us while seeding a public topic (observe.mjs).
     -- Aggregate health data only — never used to track individuals.
+    -- Keyed by /24, not by host:port. Source ports are ephemeral and full host
+    -- addresses were never read by anything (every consumer collapsed them to
+    -- prefixOf() immediately), so keying on the network both stops reconnect
+    -- churn from inserting near-duplicate rows and keeps peer addresses out of
+    -- the database entirely. Rows are pruned by last_seen — see observe.mjs.
     CREATE TABLE IF NOT EXISTS observations (
       public_key TEXT NOT NULL,
-      host       TEXT NOT NULL,
-      port       INTEGER NOT NULL,
+      prefix24   TEXT NOT NULL,   -- the /24, e.g. "143.198.58"
       app        TEXT,
       first_seen INTEGER NOT NULL,
       last_seen  INTEGER NOT NULL,
       count      INTEGER NOT NULL DEFAULT 1,
-      PRIMARY KEY (public_key, host, port)
+      PRIMARY KEY (public_key, prefix24)
     );
 
     CREATE TABLE IF NOT EXISTS snapshots (
@@ -161,8 +165,75 @@ export function openDb(path = dbPath()) {
   ) {
     db.exec('ALTER TABLE snapshots ADD COLUMN observed INTEGER');
   }
+  migrateObservationsToPrefix(db);
 
   return db;
+}
+
+// Rebuild a pre-/24 observations table: PK (public_key, host, port) ->
+// (public_key, prefix24), dropping host and port. A primary key can't be
+// ALTERed in SQLite, so this is a create/copy/swap, guarded on the old `host`
+// column still being present and wrapped in a transaction (an interrupted run
+// leaves the original table untouched).
+//
+// Collapsing duplicates: rows for the same peer across ports — and across
+// hosts inside one /24 — merge into one, summing `count` and taking the
+// earliest first_seen / latest last_seen. `app` is taken from the most recent
+// contributing row; a peer seen under two app tags previously kept whichever
+// row was inserted first, so neither shape carries per-app history.
+//
+// rtrim(rtrim(host,'0123456789'),'.') is prefixOf() in SQL: strip the trailing
+// octet's digits, then the dot. Safe here because every host is a validated
+// IPv4 literal (the DHT is IPv4-only).
+function migrateObservationsToPrefix(db) {
+  const obsCols = new Set(
+    db
+      .prepare('PRAGMA table_info(observations)')
+      .all()
+      .map((col) => col.name)
+  );
+  if (!obsCols.has('host')) {
+    return;
+  }
+  db.exec(`
+    BEGIN;
+    CREATE TABLE observations_new (
+      public_key TEXT NOT NULL,
+      prefix24   TEXT NOT NULL,
+      app        TEXT,
+      first_seen INTEGER NOT NULL,
+      last_seen  INTEGER NOT NULL,
+      count      INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (public_key, prefix24)
+    );
+    INSERT INTO observations_new
+      (public_key, prefix24, app, first_seen, last_seen, count)
+    WITH expanded AS (
+      SELECT
+        public_key,
+        rtrim(rtrim(host, '0123456789'), '.') AS prefix24,
+        app,
+        first_seen,
+        last_seen,
+        count
+      FROM observations
+    )
+    SELECT
+      grouped.public_key,
+      grouped.prefix24,
+      (SELECT pick.app FROM expanded AS pick
+        WHERE pick.public_key = grouped.public_key
+          AND pick.prefix24 = grouped.prefix24
+        ORDER BY pick.last_seen DESC LIMIT 1),
+      MIN(grouped.first_seen),
+      MAX(grouped.last_seen),
+      SUM(grouped.count)
+    FROM expanded AS grouped
+    GROUP BY grouped.public_key, grouped.prefix24;
+    DROP TABLE observations;
+    ALTER TABLE observations_new RENAME TO observations;
+    COMMIT;
+  `);
 }
 
 // ---------------------------------------------------------------------------
@@ -323,9 +394,9 @@ export function observationsRepo(db) {
   const stmts = {
     upsert: db.prepare(`
       INSERT INTO observations
-        (public_key, host, port, app, first_seen, last_seen, count)
-      VALUES (?, ?, ?, ?, ?, ?, 1)
-      ON CONFLICT(public_key, host, port) DO UPDATE SET
+        (public_key, prefix24, app, first_seen, last_seen, count)
+      VALUES (?, ?, ?, ?, ?, 1)
+      ON CONFLICT(public_key, prefix24) DO UPDATE SET
         last_seen = excluded.last_seen, count = count + 1
     `),
     countParticipants: db.prepare(
@@ -337,32 +408,37 @@ export function observationsRepo(db) {
     distinctKeysForApp: db.prepare(
       'SELECT DISTINCT public_key FROM observations WHERE app = ?'
     ),
-    distinctHostsForApp: db.prepare(
-      'SELECT DISTINCT host FROM observations WHERE app = ?'
+    distinctPrefixesForApp: db.prepare(
+      'SELECT DISTINCT prefix24 FROM observations WHERE app = ?'
     ),
-    distinctHosts: db.prepare('SELECT DISTINCT host FROM observations'),
-    all: db.prepare('SELECT host, app, public_key FROM observations'),
+    distinctPrefixes: db.prepare('SELECT DISTINCT prefix24 FROM observations'),
+    all: db.prepare('SELECT prefix24, app, public_key FROM observations'),
     allDetailed: db.prepare(
-      `SELECT public_key, host, app, first_seen, last_seen, count
+      `SELECT public_key, prefix24, app, first_seen, last_seen, count
        FROM observations`
     ),
-    keyCounts: db.prepare('SELECT public_key, count FROM observations')
+    keyCounts: db.prepare('SELECT public_key, count FROM observations'),
+    pruneStale: db.prepare('DELETE FROM observations WHERE last_seen < ?')
   };
   return {
-    // Record a connecting peer as aggregate health (observe.mjs).
-    record: ({ publicKey, host, port, app, at }) =>
-      stmts.upsert.run(publicKey, host, port, app, at, at),
+    // Record a connecting peer as aggregate health (observe.mjs). Takes the
+    // host but stores only its /24 — the full address is never persisted.
+    record: ({ publicKey, host, app, at }) =>
+      stmts.upsert.run(publicKey, prefixOf(host), app, at, at),
     countDistinctParticipants: () => stmts.countParticipants.get().n,
     countDistinctForApp: (app) => stmts.countParticipantsForApp.get(app).n,
     distinctKeysForApp: (app) =>
       stmts.distinctKeysForApp.all(app).map((row) => row.public_key),
-    distinctHostsForApp: (app) =>
-      stmts.distinctHostsForApp.all(app).map((row) => row.host),
-    distinctHosts: () => stmts.distinctHosts.all().map((row) => row.host),
+    distinctPrefixesForApp: (app) =>
+      stmts.distinctPrefixesForApp.all(app).map((row) => row.prefix24),
+    distinctPrefixes: () =>
+      stmts.distinctPrefixes.all().map((row) => row.prefix24),
     all: () => stmts.all.all(),
     // Full observation rows for the summary tables (per-app + app×country).
     allDetailed: () => stmts.allDetailed.all(),
-    keyCounts: () => stmts.keyCounts.all()
+    keyCounts: () => stmts.keyCounts.all(),
+    // Retention: drop observations whose last sighting predates `cutoff`.
+    pruneStaleBefore: (cutoff) => stmts.pruneStale.run(cutoff).changes
   };
 }
 

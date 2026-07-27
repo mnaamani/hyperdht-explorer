@@ -136,9 +136,16 @@ one thing to verify when first cutting a binary.
   `sourceapp=hyperdht-explorer`; max 8 concurrent/IP (we go sequential + spaced); cache
   and refetch weekly; reuse one covering prefix across the /24s it contains.
 - `commands/observe.mjs` (`observe`) — two modes, both record connecting peers (incl. NAT'd)
-  into the `observations` table via `conn.rawStream.remoteHost/remotePort`; self-timed
-  (`--minutes`); HEALTH-ONLY (aggregate, public topics, never deanonymize — see the
+  into the `observations` table via `conn.rawStream.remoteHost` (reduced to its /24
+  before it is stored — the port and full address are never persisted); self-timed
+  (`--minutes`); prunes observations older than `--prune-days` (default 30) on every
+  run; HEALTH-ONLY (aggregate, public topics, never deanonymize — see the
   `project-intent-health-not-deanon` memory).
+  **`probe` does not and should not touch observed peers** — it pings `nodes` only.
+  Observed endpoints are NAT'd/ephemeral connection addresses, not routing nodes, so
+  `dht.ping` would time out for everyone behind a NAT and manufacture a "dead" signal
+  biased against exactly the residential/mobile peers this layer exists to count.
+  Re-observation, not pinging, is the liveness signal for these peers.
   - **default (seed):** actually replicate + serve the app's **public** update drive. Hyperswarm + Corestore +
     Hyperdrive, join `drive.discoveryKey` as **server+client**, `store.replicate(conn)` per
     connection, best-effort background prefetch of the **latest** version (sparse, not full
@@ -181,9 +188,21 @@ one thing to verify when first cutting a binary.
   ASNs. `as_names` — PK `asn`, cached AS holder names. Both refetched weekly.
 - `rpki` — PK `prefix24`. RIPEstat RPKI validity: `covering`, `origin_asn`,
   `status` (valid/invalid/unknown/unannounced), `fetched_at`.
-- `observations` — PK `(public_key, host, port)`. Peers seen connecting via
+- `observations` — PK `(public_key, prefix24)`. Peers seen connecting via
   `commands/observe.mjs`: `app`, `first_seen`, `last_seen`, `count`. `snapshots.observed` =
   `COUNT(DISTINCT public_key)`, trended on the timeline.
+  **Keyed by /24, and the full host address is never stored** — source ports are
+  ephemeral, so the old `(public_key, host, port)` PK inserted a near-duplicate row
+  on every reconnect (~40% of rows were pure port churn), and no consumer ever read
+  the host without collapsing it to `prefixOf()` first. `migrateObservationsToPrefix()`
+  in `db.mjs` rebuilds pre-/24 databases (create/copy/swap — SQLite can't ALTER a PK),
+  merging duplicates: `SUM(count)`, `MIN(first_seen)`, `MAX(last_seen)`, `app` from the
+  most recent row. Because observed rows carry no member IP, `commands/geo.mjs` queries
+  `<prefix>.1` as the representative for observation-only networks (ip-api is a database
+  lookup, not a probe — nothing is sent to that address).
+  **This is the one table that grows without bound**, so `observe` prunes it by
+  `last_seen` on every run: `--prune-days N` (default 30, `0` disables), mirroring
+  `scan`'s `--prune-hours` for `nodes`.
 
 Schema changes go in `db.mjs`: add the column to `CREATE TABLE` **and** add a
 `PRAGMA table_info`-guarded `ALTER TABLE` for existing databases. `nodes.db`

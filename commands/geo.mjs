@@ -45,20 +45,24 @@ export async function run(ctx) {
     }
   }
   const need = new Map(); // prefix -> representative IP to query
-  // classify both crawled nodes AND observed (seed-and-listen) peers
-  const hosts = new Set();
+  // Crawled nodes: real addresses, so one of them is the representative IP.
   for (const host of nodes.distinctHosts()) {
-    hosts.add(host);
-  }
-  for (const host of observations.distinctHosts()) {
-    hosts.add(host);
-  }
-  for (const host of hosts) {
     const prefix = prefixOf(host);
     if (done.has(prefix) || need.has(prefix)) {
       continue;
     }
     need.set(prefix, host);
+  }
+  // Observed peers are stored as /24s only (their addresses are never kept), so
+  // there is no member host to send. Query `<prefix>.1` as the representative:
+  // ip-api is a database lookup, not a probe — nothing is sent to that address —
+  // and the whole geo cache is already /24-granular, so any member of the
+  // network resolves to the record we would store anyway.
+  for (const prefix of observations.distinctPrefixes()) {
+    if (done.has(prefix) || need.has(prefix)) {
+      continue;
+    }
+    need.set(prefix, `${prefix}.1`);
   }
 
   const work = [...need.entries()]; // [prefix, ip][]
