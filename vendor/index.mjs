@@ -34,7 +34,17 @@ const ASSETS = {
   'images/layers.png': import.meta.asset('./images/layers.png'),
   'images/layers-2x.png': import.meta.asset('./images/layers-2x.png'),
   'chart.umd.js': import.meta.asset('./chart.umd.js'),
-  'd3.min.js': import.meta.asset('./d3.min.js')
+  'd3.min.js': import.meta.asset('./d3.min.js'),
+  // Licence texts, served next to the code they cover. MIT and BSD-2 require
+  // the notice to accompany copies, and we hand a copy to every visitor:
+  // Leaflet, Chart.js and D3 keep a banner through minification, but
+  // markercluster's minified build has none and neither does any of the CSS.
+  'licenses/leaflet.txt': import.meta.asset('./licenses/leaflet.txt'),
+  'licenses/leaflet.markercluster.txt': import.meta.asset(
+    './licenses/leaflet.markercluster.txt'
+  ),
+  'licenses/chart.js.txt': import.meta.asset('./licenses/chart.js.txt'),
+  'licenses/d3.txt': import.meta.asset('./licenses/d3.txt')
 };
 
 // What each page needs. Named per library so a render command asks for what it
@@ -47,10 +57,12 @@ const BUNDLES = {
     'MarkerCluster.css',
     'MarkerCluster.Default.css',
     'images/layers.png',
-    'images/layers-2x.png'
+    'images/layers-2x.png',
+    'licenses/leaflet.txt',
+    'licenses/leaflet.markercluster.txt'
   ],
-  chart: ['chart.umd.js'],
-  d3: ['d3.min.js']
+  chart: ['chart.umd.js', 'licenses/chart.js.txt'],
+  d3: ['d3.min.js', 'licenses/d3.txt']
 };
 
 // Copy one asset into public/vendor/, skipping the write when the destination

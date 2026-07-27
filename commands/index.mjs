@@ -261,6 +261,10 @@ export function run() {
       viewing a report discloses nothing to anyone else.
       <br><a href="privacy.html">Privacy notice</a> ·
       <a href="scanner.html">did a node from here contact you?</a>
+      <br>Built with <a href="https://leafletjs.com" rel="noopener">Leaflet</a>,
+      <a href="https://www.chartjs.org" rel="noopener">Chart.js</a> and
+      <a href="https://d3js.org" rel="noopener">D3</a>, served from this site —
+      licences in <code>vendor/licenses/</code>.
     </footer>
   </div>
 </body>

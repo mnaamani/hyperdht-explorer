@@ -13,6 +13,7 @@
     "lint": "prettier . --check && lunte && eslint .",
     "make": "node scripts/make.js",
     "vendor:sync": "node scripts/vendor-sync.js",
+    "licenses": "node scripts/licenses.js",
     "make:darwin-arm64": "bare-build --name hyperdht-explorer --standalone --host darwin-arm64 --out ./out/darwin-arm64 bin.mjs",
     "make:darwin-x64": "bare-build --name hyperdht-explorer --standalone --host darwin-x64 --out ./out/darwin-x64 bin.mjs",
     "make:linux-arm64": "bare-build --name hyperdht-explorer --standalone --host linux-arm64 --out ./out/linux-arm64 bin.mjs",

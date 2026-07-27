@@ -32,12 +32,58 @@ const FILES = [
   ['d3/dist/d3.min.js', 'd3.min.js']
 ];
 
-for (const [from, to] of FILES) {
-  const source = path.join(ROOT, 'node_modules', from);
-  const dest = path.join(VENDOR, to);
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.copyFileSync(source, dest);
-  const { size } = fs.statSync(dest);
-  console.log(`${to.padEnd(28)} ${(size / 1024).toFixed(0)} KB  <- ${from}`);
+// The npm packages the files above come from, deduped. scripts/licenses.js
+// reads this so the attribution file can't drift from what is actually
+// vendored — these are devDependencies, so they do not appear in the
+// production dependency tree even though they ARE redistributed.
+const PACKAGES = [...new Set(FILES.map(([from]) => from.split('/')[0]))];
+
+module.exports = { FILES, PACKAGES };
+
+// Filenames these four projects use for their licence text.
+const LICENSE_FILES = [
+  'LICENSE',
+  'LICENSE.md',
+  'LICENSE.txt',
+  'LICENCE',
+  'MIT-LICENCE.txt',
+  'MIT-LICENSE.txt'
+];
+
+// Copy each vendored package's licence text to vendor/licenses/<pkg>.txt.
+//
+// This is not belt-and-braces. MIT and BSD-2 require the notice to accompany
+// copies of the software, and we hand copies to every visitor. Leaflet,
+// Chart.js and D3 keep a banner through minification, but markercluster's
+// minified build has none and neither does any of the CSS — so without these
+// files, the copies we serve carry no notice at all.
+function syncLicenses() {
+  const dir = path.join(VENDOR, 'licenses');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const pkg of PACKAGES) {
+    const base = path.join(ROOT, 'node_modules', pkg);
+    const found = LICENSE_FILES.find((name) =>
+      fs.existsSync(path.join(base, name))
+    );
+    if (!found) {
+      console.log(`${pkg.padEnd(28)} !! no licence file found`);
+      continue;
+    }
+    fs.copyFileSync(path.join(base, found), path.join(dir, `${pkg}.txt`));
+    console.log(`licenses/${pkg}.txt`.padEnd(28) + `      <- ${pkg}/${found}`);
+  }
 }
-console.log(`\n${FILES.length} file(s) refreshed in vendor/`);
+
+// Only copy when run directly (`npm run vendor:sync`), not when required.
+if (require.main === module) {
+  for (const [from, to] of FILES) {
+    const source = path.join(ROOT, 'node_modules', from);
+    const dest = path.join(VENDOR, to);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(source, dest);
+    const { size } = fs.statSync(dest);
+    console.log(`${to.padEnd(28)} ${(size / 1024).toFixed(0)} KB  <- ${from}`);
+  }
+  syncLicenses();
+  console.log(`\n${FILES.length} file(s) + licences refreshed in vendor/`);
+}

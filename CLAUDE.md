@@ -197,6 +197,14 @@ one thing to verify when first cutting a binary.
   `npm run vendor:sync` after bumping the pinned devDependency. The one remaining
   third-party request is `map.html`'s basemap tiles (not self-hostable); it carries
   `<meta name="referrer" content="no-referrer">` and is disclosed in the notice.
+  **Attribution:** we redistribute those libraries (served to visitors AND embedded
+  in the binary), so their MIT/BSD notices have to travel with them. `vendor:sync`
+  also copies each licence to `vendor/licenses/<pkg>.txt` and `ensureVendor` serves
+  them — markercluster's minified build and every vendored `.css` carry no banner,
+  so without those files the served copies would have no notice. `npm run licenses`
+  regenerates `THIRD-PARTY-NOTICES.md` (vendored libs + the 145 production packages
+  bare-build bundles); re-run it after any dependency change. Our own licence
+  (Apache-2.0) is unaffected.
 - `publishedNetwork({prefix, kind, count})` / `isSmallEndUserNetwork()` (db.mjs) —
   k-anonymity for published pages: a residential/mobile /24 with fewer than
   `MIN_PUBLISHED_GROUP` (3) participants is rendered as its covering /16 with the
