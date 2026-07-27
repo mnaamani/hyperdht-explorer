@@ -186,7 +186,17 @@ export function run(ctx) {
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <style>
     html, body, #map { height: 100%; margin: 0; background: #1a1a1a; }
-    .legend { background: #fff; padding: 8px 10px; border-radius: 4px; font: 12px sans-serif; line-height: 18px; }
+    /* The legend is a <details>: open on desktop, collapsed to a one-line
+       summary on small screens so it stops covering the map. */
+    .legend { background: #fff; border-radius: 4px; font: 12px sans-serif; line-height: 18px; }
+    .legend > summary { cursor: pointer; padding: 6px 10px; font-weight: bold;
+      list-style: none; display: flex; gap: 8px; align-items: center;
+      justify-content: space-between; user-select: none; }
+    .legend > summary:hover { background: #eee; border-radius: 4px; }
+    .legend > summary::-webkit-details-marker { display: none; }
+    .legend > summary::after { content: '\\25b8'; color: #666; }
+    .legend[open] > summary::after { content: '\\25be'; }
+    .legend-body { padding: 0 10px 8px; }
     /* one view at a time: the layer control holds radios, so give each option
        room for a title plus a line explaining what it actually plots */
     .leaflet-control-layers-base label { margin-bottom: 6px; }
@@ -198,6 +208,20 @@ export function run(ctx) {
       max-width: 230px; line-height: 14px; }
     .legend i { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border-radius: 50%; }
     .leaflet-popup-content { font: 12px/1.4 sans-serif; }
+
+    /* Phone-sized screens: shrink the two overlays and cap how much of the
+       viewport they can eat. Both stay scrollable rather than overflowing. */
+    @media (max-width: 700px) {
+      .legend { font-size: 11px; line-height: 15px; max-width: 62vw; }
+      .legend[open] .legend-body { max-height: 42vh; overflow-y: auto; }
+      .legend i { width: 10px; height: 10px; margin-right: 4px; }
+      .leaflet-control-layers-expanded { max-width: 66vw; max-height: 52vh; overflow-y: auto; }
+      /* titles are enough when space is scarce; the descriptions stay on desktop */
+      .lyr { font-size: 12px; max-width: none; }
+      .lyr small, .lyr-hint { display: none; }
+      .leaflet-popup-content { max-width: 66vw; }
+      .leaflet-control-attribution { font-size: 9px; }
+    }
   </style>
 </head>
 <body>
@@ -343,17 +367,40 @@ export function run(ctx) {
     views[label('👁 Observed peers by /24 (' + observedPeers + ')',
       'The same observed peers at network detail, one dot per /24 instead of per country.')] = observedLayer;
 
-    const layerControl = L.control.layers(views, null, { collapsed: false });
+    // Phones: start both overlays folded away so the map itself is visible.
+    const small = window.matchMedia('(max-width: 700px)').matches;
+
+    const layerControl = L.control.layers(views, null, { collapsed: small });
     layerControl.addTo(map);
 
     const hint = L.DomUtil.create('div', 'lyr-hint');
     hint.textContent = 'Pick one view — the map shows a single layer at a time.';
     layerControl.getContainer().appendChild(hint);
 
+    // On a phone the expanded control covers the map, so fold it back up once a
+    // view has been picked (Leaflet only auto-collapses on mouse-out).
+    if (small) {
+      map.on('baselayerchange', function () {
+        const el = layerControl.getContainer();
+        L.DomUtil.removeClass(el, 'leaflet-control-layers-expanded');
+      });
+    }
+
     const legend = L.control({ position: 'bottomright' });
     legend.onAdd = function () {
-      const div = L.DomUtil.create('div', 'legend');
-      div.innerHTML = '<b>sessions seen</b><br>' +
+      const div = L.DomUtil.create('details', 'legend');
+      // Remember whether the reader minimized it; default open on desktop,
+      // minimized on phones where it would otherwise cover the map.
+      // (localStorage can throw on a sandboxed file:// origin — never fatal)
+      let stored = null;
+      try {
+        stored = localStorage.getItem('legendOpen');
+      } catch (err) {
+        stored = null;
+      }
+      div.open = stored === null ? !small : stored === '1';
+      div.innerHTML = '<summary>legend</summary><div class="legend-body">' +
+        '<b>sessions seen</b><br>' +
         '<i style="background:#2ecc71"></i>10+ (stable)<br>' +
         '<i style="background:#a3e635"></i>5–9<br>' +
         '<i style="background:#f1c40f"></i>3–4<br>' +
@@ -363,7 +410,18 @@ export function run(ctx) {
         '<i style="background:#a3e635;border:2px solid #ff2bd6"></i>app seeder (fill = sessions)<br>' +
         '<i style="background:#ff9f1c"></i>observed /24 (detail)<br>' +
         '<i style="background:#b6ff3c"></i>observed by country<br>' +
-        '<span style="color:#5f7d6e;font-size:11px">↑ size = participants, colour = host-type</span>';
+        '<span style="color:#5f7d6e;font-size:11px">↑ size = participants, colour = host-type</span>' +
+        '</div>';
+      div.addEventListener('toggle', function () {
+        try {
+          localStorage.setItem('legendOpen', div.open ? '1' : '0');
+        } catch (err) {
+          /* no persistence available; the panel still toggles */
+        }
+      });
+      // taps on the legend must not reach the map underneath (pan/zoom)
+      L.DomEvent.disableClickPropagation(div);
+      L.DomEvent.disableScrollPropagation(div);
       return div;
     };
     legend.addTo(map);
