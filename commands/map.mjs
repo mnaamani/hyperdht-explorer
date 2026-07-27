@@ -232,7 +232,11 @@ export function run(ctx) {
     const OBSERVED_COUNTRIES = ${jsonSafe(observedCountries)};
     const KIND_COLOR = { residential: '#b6ff3c', mobile: '#4cd9ff', datacenter: '#5f7d6e', proxy: '#ff2bd6', unknown: '#5f7d6e' };
 
-    const map = L.map('map', { worldCopyJump: true }).setView([20, 0], 2);
+    // preferCanvas: draw circleMarkers into one <canvas> instead of one SVG
+    // <path> element each. With thousands of /24 dots the DOM node count is
+    // what makes zoom/pan stutter and holds the memory; canvas is flat cost.
+    const map = L.map('map', { worldCopyJump: true, preferCanvas: true })
+      .setView([20, 0], 2);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
     }).addTo(map);
@@ -284,8 +288,19 @@ export function run(ctx) {
         (p.apps.length ? '<br>★ seeds: <b>' + esc(p.apps.join(', ')) + '</b>' : '');
     }
 
-    const cluster = L.markerClusterGroup({ maxClusterRadius: 40, spiderfyOnMaxZoom: true });
+    const cluster = L.markerClusterGroup({
+      maxClusterRadius: 40,
+      spiderfyOnMaxZoom: true,
+      chunkedLoading: true
+    });
     const seederLayer = L.layerGroup();  // highlight rings, toggleable on their own
+    const nodeMarkers = [];
+
+    // Same lazy-popup treatment as the observed layer: the crawl's /24 count
+    // grows the same way, so don't build a string per marker up front.
+    function nodePopup(layer) {
+      return popupHtml(layer.point, layer.probeLine);
+    }
 
     for (const p of POINTS) {
       // grey out networks that were probed but had nothing answer; otherwise
@@ -300,39 +315,68 @@ export function run(ctx) {
             : 'unreachable (' + p.probed + ' probed)');
       const r = 4 + Math.min(12, Math.log2(p.nodes + 1) * 2);
 
-      L.circleMarker([p.lat, p.lon], {
+      const marker = L.circleMarker([p.lat, p.lon], {
         radius: r, color: c, fillColor: c, fillOpacity: dead ? 0.3 : 0.6, weight: 1
-      }).bindPopup(popupHtml(p, probeLine)).addTo(cluster);
+      });
+      marker.point = p;
+      marker.probeLine = probeLine;
+      marker.bindPopup(nodePopup);
+      nodeMarkers.push(marker);
 
       // App seeders on their own layer. Since views are exclusive, this layer
       // has to stand alone: draw a filled dot (stability colour, as in the base
       // view) with a magenta outline marking it as a seeder — not a bare ring,
       // which would have nothing underneath it.
       if (p.apps.length) {
-        L.circleMarker([p.lat, p.lon], {
+        const seeder = L.circleMarker([p.lat, p.lon], {
           radius: r, color: '#ff2bd6', fillColor: c,
           fillOpacity: dead ? 0.3 : 0.75, weight: 2
-        }).bindPopup(popupHtml(p, probeLine)).addTo(seederLayer);
+        });
+        seeder.point = p;
+        seeder.probeLine = probeLine;
+        seeder.bindPopup(nodePopup);
+        seeder.addTo(seederLayer);
       }
     }
+    cluster.addLayers(nodeMarkers);  // bulk add, one index build
     map.addLayer(cluster); // the only layer on by default — plain DHT nodes
 
-    // observed participants (observe.mjs) — orange diamonds, own toggleable layer
-    const observedLayer = L.layerGroup();
-    let observedPeers = 0;
-    for (const o of OBSERVED) {
-      observedPeers += o.peers;
-      L.circleMarker([o.lat, o.lon], {
-        radius: 5 + Math.min(10, Math.log2(o.peers + 1) * 2.5),
-        color: '#ff9f1c', fillColor: '#ff9f1c', fillOpacity: 0.55, weight: 1.5
-      }).bindPopup(
-        '<b>' + esc(o.city || '?') + ', ' + esc(o.country || '?') + '</b><br>' +
-        'network <code>' + esc(o.prefix) + '.0/24</code> &middot; ' + esc(o.kind) + '<br>' +
+    // Observed participants (observe.mjs), one dot per /24 — the layer that
+    // grows without bound as observe runs accumulate. Clustered rather than a
+    // plain layerGroup: markerClusterGroup only keeps markers inside the
+    // current viewport attached (removeOutsideVisibleBounds, on by default),
+    // so pan/zoom cost tracks what's on screen, not the total marker count.
+    const observedLayer = L.markerClusterGroup({
+      maxClusterRadius: 50,
+      spiderfyOnMaxZoom: true,
+      chunkedLoading: true  // add in timed chunks; keeps the first paint responsive
+    });
+
+    // One shared popup builder, called on click. Binding a prebuilt string per
+    // marker would build and retain thousands of HTML strings at load time.
+    function observedPopup(layer) {
+      const row = layer.observed;
+      return '<b>' + esc(row.city || '?') + ', ' + esc(row.country || '?') + '</b><br>' +
+        'network <code>' + esc(row.prefix) + '.0/24</code> &middot; ' + esc(row.kind) + '<br>' +
         '<hr style="margin:4px 0">' +
-        '👁 ' + o.peers + ' observed participant(s)<br>' +
-        (o.apps.length ? 'app: <b>' + esc(o.apps.join(', ')) + '</b>' : '')
-      ).addTo(observedLayer);
+        '👁 ' + row.peers + ' observed participant(s)<br>' +
+        (row.apps.length ? 'app: <b>' + esc(row.apps.join(', ')) + '</b>' : '');
     }
+
+    let observedPeers = 0;
+    const observedMarkers = [];
+    for (const row of OBSERVED) {
+      observedPeers += row.peers;
+      const marker = L.circleMarker([row.lat, row.lon], {
+        radius: 5 + Math.min(10, Math.log2(row.peers + 1) * 2.5),
+        color: '#ff9f1c', fillColor: '#ff9f1c', fillOpacity: 0.55, weight: 1.5
+      });
+      marker.observed = row;
+      marker.bindPopup(observedPopup);
+      observedMarkers.push(marker);
+    }
+    // bulk add: one index build instead of a reflow per marker
+    observedLayer.addLayers(observedMarkers);
 
     // observed participants aggregated per country — overview layer (on by default).
     const observedCountryLayer = L.layerGroup();
