@@ -46,7 +46,7 @@ const PAGES = [
       'Time series across crawls: churn, growth, liveness, observed peers ' +
       'and storage-health decay.',
     command: 'render:timeline',
-    offline: false
+    offline: true
   },
   {
     file: 'topology.html',
@@ -55,7 +55,16 @@ const PAGES = [
       'Force graph of the BGP/AS interconnection underlying the nodes. This ' +
       'is the underlay, not DHT overlay links.',
     command: 'render:topo',
-    offline: false
+    offline: true
+  },
+  {
+    file: 'privacy.html',
+    title: 'privacy notice',
+    blurb:
+      'What is collected about network participants and site visitors, why, ' +
+      'how long it is kept, and how to be excluded.',
+    command: 'render:privacy',
+    offline: true
   }
 ];
 
@@ -247,8 +256,11 @@ export function run() {
       seeders are only those announcing a known public app key. Node ids are
       <code>hash(ip:port)</code>, not connectable identities. IPv4 only: the
       protocol carries no IPv6 addresses at the routing layer.
-      Pages marked <span class="tag cdn">needs internet</span> load Chart.js,
-      D3 or map tiles from a CDN at view time.
+      Pages marked <span class="tag cdn">needs internet</span> load map tiles
+      from a third party at view time; everything else is served from here, so
+      viewing a report discloses nothing to anyone else.
+      <br><a href="privacy.html">Privacy notice</a> ·
+      <a href="scanner.html">did a node from here contact you?</a>
     </footer>
   </div>
 </body>

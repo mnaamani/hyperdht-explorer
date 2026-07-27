@@ -56,7 +56,9 @@ const namedExportsOnly = {
 
 module.exports = [
   {
-    ignores: ['**/node_modules/**', 'out/**']
+    // vendor/*.js is upstream Leaflet/Chart.js/D3 build output copied verbatim
+    // (see .prettierignore); vendor/index.mjs is ours and stays linted.
+    ignores: ['**/node_modules/**', 'out/**', 'vendor/*.js']
   },
   // Bare/Node CJS: the OTA updater (app.cjs, workers/main.cjs) + build script.
   {

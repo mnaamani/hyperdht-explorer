@@ -63,8 +63,8 @@ command is otherwise a small single-purpose unit sharing one SQLite database.
 
 **All SQL lives in `db.mjs` behind a repository layer.** Commands do NOT call
 `db.prepare(...)` — they instantiate a per-table repo factory
-(`nodesRepo`, `observationsRepo`, `geoRepo`, `snapshotsRepo`, `storeProbesRepo`,
-`asTopologyRepo`, `rpkiRepo`) and call its named methods (`nodes.recordSeederEndpoint(...)`,
+(`nodesRepo`, `observationsRepo`, `pseudonymsRepo`, `exclusionsRepo`, `geoRepo`,
+`snapshotsRepo`, `storeProbesRepo`, `asTopologyRepo`, `rpkiRepo`) and call its named methods (`nodes.recordSeederEndpoint(...)`,
 `geo.locatedNetworks()`, …). Each factory prepares its statements once per
 instance and reused; the method names read as intent, not SQL. Conventions:
 write methods taking more than a host/port pair take a **single destructured
@@ -106,7 +106,24 @@ one thing to verify when first cutting a binary.
   tag announcer relay endpoints in `app_seeder`. `ops/scheduled-seeders.sh` runs it
   on its own cron schedule (own lock, env: SEEDERS_TARGET/SEEDERS_APP), kept out of
   the 15-min scan cycle so a slow lookup can't delay a snapshot.
-- `commands/map.mjs` (`render:map`) — emits self-contained `map.html` (Leaflet, data inlined).
+- `commands/map.mjs` (`render:map`) — emits `map.html` (Leaflet, data inlined).
+- `commands/privacy.mjs` (`render:privacy`) — emits `privacy.html` (the GDPR Art. 14
+  notice), `scanner.html` (the page a sysadmin reaches via the crawler IP's rDNS) and
+  `.well-known/security.txt` (RFC 9116; `Expires` rolls forward on each render).
+  **The notice deliberately does not identify an operator** and has no
+  supervisory-authority/complaints section — removed at the maintainer's request,
+  knowing Art. 14(1)(a) expects a controller to be identifiable; don't reinstate
+  either without asking. `CONTACT_EMAIL` at the top is the **only** site-specific
+  value — one address, the abuse/exclusion contact, needed by `scanner.html` and by
+  security.txt's mandatory `Contact` field — and ships as a `[…]` placeholder the
+  command warns about loudly. There is deliberately **no site URL**: pages link to
+  each other relatively so they work from any host, which is why security.txt omits
+  the optional `Canonical`/`Policy` fields (both would have to be absolute URIs).
+  Don't add a hostname constant back.
+  Facts that are properties of the code (retention windows, salt rotation, the
+  suppression threshold) are constants there; keep them in step with the code they
+  describe. `ops/scheduled-scan.sh` renders it every cycle so a report can never be
+  published without its notice.
 - `commands/ring.mjs` (`render:ring`) — emits `ring.html`, an offline inline-SVG circular
   projection of the keyspace (no CDN).
 - `commands/timeline.mjs` (`render:timeline`) — emits `timeline.html` (Chart.js via CDN). Views 1/2/4
@@ -138,9 +155,12 @@ one thing to verify when first cutting a binary.
 - `commands/observe.mjs` (`observe`) — two modes, both record connecting peers (incl. NAT'd)
   into the `observations` table via `conn.rawStream.remoteHost` (reduced to its /24
   before it is stored — the port and full address are never persisted); self-timed
-  (`--minutes`); prunes observations older than `--prune-days` (default 30) on every
+  (`--minutes`); prunes observations older than `--prune-days` (default 14) on every
   run; HEALTH-ONLY (aggregate, public topics, never deanonymize — see the
-  `project-intent-health-not-deanon` memory).
+  `project-intent-health-not-deanon` memory). The peer's public key is pseudonymised
+  and the host reduced to its /24 **before the first write**, and the per-connection
+  log line prints the /24 too — cron appends those logs to a file, so a full address
+  there would persist exactly what the DB goes out of its way not to keep.
   **`probe` does not and should not touch observed peers** — it pings `nodes` only.
   Observed endpoints are NAT'd/ephemeral connection addresses, not routing nodes, so
   `dht.ping` would time out for everyone behind a NAT and manufacture a "dead" signal
@@ -166,6 +186,22 @@ one thing to verify when first cutting a binary.
   - `ops/scheduled-observe.sh` runs it on a separate cron schedule (env:
     OBSERVE_LINK/OBSERVE_APP/OBSERVE_MINUTES).
 
+- **No third-party subresources on any generated page.** Leaflet / markercluster /
+  Chart.js / D3 are checked into `vendor/` and referenced via `import.meta.asset`,
+  which is what makes them survive `bare-build --standalone` (bare-pack embeds the
+  file and hands back a path at runtime; node_modules doesn't exist next to a
+  binary). `ensureVendor('leaflet'|'chart'|'d3')` copies them to
+  `<dataDir>/public/vendor/` and pages link `vendor/<name>` relatively. This is a
+  data-protection measure — a CDN `<script src>` discloses every visitor's IP to a
+  third party — so **don't reintroduce a CDN URL**. Refresh with
+  `npm run vendor:sync` after bumping the pinned devDependency. The one remaining
+  third-party request is `map.html`'s basemap tiles (not self-hostable); it carries
+  `<meta name="referrer" content="no-referrer">` and is disclosed in the notice.
+- `publishedNetwork({prefix, kind, count})` / `isSmallEndUserNetwork()` (db.mjs) —
+  k-anonymity for published pages: a residential/mobile /24 with fewer than
+  `MIN_PUBLISHED_GROUP` (3) participants is rendered as its covering /16 with the
+  city withheld. Display only — every count stays the true count. Used by
+  `summary.mjs` and `map.mjs`; use it for any new page that names a network.
 - `hostKind(geoRow)` (db.mjs) classifies a network datacenter/mobile/proxy/residential
   from ip-api's `hosting`/`mobile`/`proxy` flags (geo.mjs fetches them; backfills older
   rows; `--refresh` forces all). Surfaced as the summary "Type" column + map colours.
@@ -188,9 +224,28 @@ one thing to verify when first cutting a binary.
   ASNs. `as_names` — PK `asn`, cached AS holder names. Both refetched weekly.
 - `rpki` — PK `prefix24`. RIPEstat RPKI validity: `covering`, `origin_asn`,
   `status` (valid/invalid/unknown/unannounced), `fetched_at`.
-- `observations` — PK `(public_key, prefix24)`. Peers seen connecting via
+- `observations` — PK `(key_hash, prefix24)`. Peers seen connecting via
   `commands/observe.mjs`: `app`, `first_seen`, `last_seen`, `count`. `snapshots.observed` =
-  `COUNT(DISTINCT public_key)`, trended on the timeline.
+  `COUNT(DISTINCT key_hash)`, trended on the timeline.
+  **`key_hash` is a PSEUDONYM, never the peer's public key** — `pseudonymOf()`
+  (db.mjs) is a keyed BLAKE2b (16-byte output) under a salt from
+  `pseudonym_salts`, which rotates **monthly** (`saltPeriodOf()`) and is deleted
+  once every row that could use it has been pruned. A bare hash would be
+  reversible by anyone enumerating candidate keys; the secret salt is what makes
+  it one-way, and destroying it is what makes surviving rows effectively
+  anonymous. Consequence for analysis: distinct-participant counts and
+  returning-vs-new are only comparable **within** a period — at a month boundary
+  a peer reads as new. `migrateObservationsToPseudonyms()` rebuilds pre-hash
+  databases under a throwaway salt that is never persisted.
+- `pseudonym_salts` — PK `period` ('YYYY-MM'): `salt` (hex), `created_at`,
+  `expires_at` (period end + retention). `observe` purges expired salts each run.
+- `exclusions` — PK `prefix24`. Networks that objected (GDPR Art. 21) or the
+  operator excludes. **Enforced at the WRITE path inside `nodesRepo` /
+  `observationsRepo`**, which read the set once at construction — a new collector
+  inherits the check instead of having to remember it. `commands/exclude.mjs`
+  (`exclude add|remove|list`) manages it and purges existing rows across every
+  table. A repo instance won't see an exclusion added mid-run; that's documented,
+  and `add` purges anything already stored.
   **Keyed by /24, and the full host address is never stored** — source ports are
   ephemeral, so the old `(public_key, host, port)` PK inserted a near-duplicate row
   on every reconnect (~40% of rows were pure port churn), and no consumer ever read
@@ -201,8 +256,10 @@ one thing to verify when first cutting a binary.
   `<prefix>.1` as the representative for observation-only networks (ip-api is a database
   lookup, not a probe — nothing is sent to that address).
   **This is the one table that grows without bound**, so `observe` prunes it by
-  `last_seen` on every run: `--prune-days N` (default 30, `0` disables), mirroring
-  `scan`'s `--prune-hours` for `nodes`.
+  `last_seen` on every run: `--prune-days N` (default 14, `0` disables), mirroring
+  `scan`'s `--prune-hours` for `nodes`. The default is a stated retention period in
+  the published notice — change one and change the other (`RETENTION_OBSERVATION_DAYS`
+  in `commands/privacy.mjs`).
 
 Schema changes go in `db.mjs`: add the column to `CREATE TABLE` **and** add a
 `PRAGMA table_info`-guarded `ALTER TABLE` for existing databases. `nodes.db`
@@ -259,7 +316,8 @@ cycle exit cleanly and write its snapshot.
   through `db.mjs`.
 - ip-api.com is HTTP-only on the free tier and rate-limited — preserve the
   `/24` dedupe + header backoff in `commands/geo.mjs`.
-- `commands/map.mjs` pulls Leaflet from a CDN; the map needs internet to render tiles.
+- `commands/map.mjs` serves Leaflet from `public/vendor/`; the map still needs
+  internet for its basemap tiles, which is the only third-party request any page makes.
 - Be honest in output about limitations (relay vs. client addresses, wall-clock
   RTT including local latency, seeders ≠ all installs). Existing code says so;
   keep that tone.

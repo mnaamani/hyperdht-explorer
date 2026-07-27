@@ -11,9 +11,13 @@ import path from 'bare-path';
 import {
   openDb,
   observationsRepo,
+  pseudonymsRepo,
   geoRepo,
   hostKind,
   isPrivateIp,
+  prefixOf,
+  pseudonymOf,
+  saltPeriodOf,
   APP_PRESETS,
   resolvePreset
 } from '../db.mjs';
@@ -43,9 +47,13 @@ import { dataDir, ensureDirs } from '../paths.mjs';
 // the app key, so we only ever store/serve authentic data. NEVER private/room data
 // (Keet chat rooms etc.); those aren't discoverable and are out of scope.
 //
-// HEALTH MONITORING ONLY. We record aggregate participation (addresses, counts,
+// HEALTH MONITORING ONLY. We record aggregate participation (networks, counts,
 // residential-vs-datacenter mix) to gauge network health — never to track or
-// deanonymize individuals.
+// deanonymize individuals. That intent is enforced by the storage layer, not
+// just asserted here: a peer's address is reduced to its /24 and its public key
+// is replaced by a pseudonym under a monthly-rotating salt (see pseudonymOf in
+// db.mjs) before anything is written, and the raw values never leave this
+// function. See PRIVACY.md for the notice this backs.
 
 export async function run(ctx) {
   // Parse flags and positionals together so a flag's VALUE (e.g. the number after
@@ -57,8 +65,11 @@ export async function run(ctx) {
   let SEED = true;
   // Retention for the observations table: it is the one table that would
   // otherwise grow forever (scan prunes `nodes`, the geo cache is bounded by
-  // /24 reuse). 0 disables pruning.
-  let PRUNE_DAYS = 30;
+  // /24 reuse). 0 disables pruning. Two weeks is enough to see a weekly cycle
+  // and to tell returning peers from new ones, which is all the analysis needs
+  // — anything longer would be data we hold without a purpose. Keep this and
+  // the retention period stated in PRIVACY.md in step.
+  let PRUNE_DAYS = 14;
   const rest = ctx.argv.slice(2);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -112,25 +123,49 @@ export async function run(ctx) {
 
   const db = openDb();
   const observations = observationsRepo(db);
+  const pseudonyms = pseudonymsRepo(db);
   const geo = geoRepo(db);
+  const retainMs = PRUNE_DAYS * 86400 * 1000;
 
   // Retention pass first, so everything below (priorKeys, the report) reflects
   // the retained window rather than rows that are about to be dropped.
   if (PRUNE_DAYS > 0) {
-    const cutoff = Date.now() - PRUNE_DAYS * 86400 * 1000;
+    const cutoff = Date.now() - retainMs;
     const dropped = observations.pruneStaleBefore(cutoff);
     if (dropped) {
       console.log(
         `pruned ${dropped} observation(s) not seen in ${PRUNE_DAYS}d`
       );
     }
+    // Then the salts whose observations are all gone. Order matters: purging
+    // salts first could briefly leave live rows whose salt has been destroyed,
+    // which is harmless but makes the invariant harder to reason about.
+    const burned = pseudonyms.purgeExpired(Date.now());
+    if (burned) {
+      console.log(`destroyed ${burned} expired pseudonym salt(s)`);
+    }
   }
+
+  // The salt for the current period. Every public key seen below is hashed
+  // under this and then forgotten; nothing else in the process keeps it.
+  const { period, periodEnd } = saltPeriodOf(Date.now());
+  const salt = pseudonyms.saltFor({
+    period,
+    periodEnd,
+    // A salt with pruning disabled must never expire, or we would destroy the
+    // salt for rows we are deliberately keeping forever.
+    retainMs: PRUNE_DAYS > 0 ? retainMs : Number.MAX_SAFE_INTEGER - periodEnd,
+    at: Date.now()
+  });
 
   const seen = new Set(); // host:port connections seen this session
 
-  // participants (public keys) observed in PRIOR sessions for this app — lets us
+  // participants (pseudonyms) observed in PRIOR sessions for this app — lets us
   // tell "returning" peers from brand-new ones. Re-observation is the meaningful
   // liveness signal for NAT'd peers (pinging their transient address would not be).
+  // Only comparable within a salt period: at the month boundary the same peer
+  // gets a new pseudonym and reads as "new", which is the intended cost of not
+  // being able to follow a peer indefinitely.
   const priorKeys = new Set(observations.distinctKeysForApp(appName));
   const sessionKeys = new Set();
   let returning = 0;
@@ -148,9 +183,11 @@ export async function run(ctx) {
       if (isPrivateIp(host)) {
         return;
       } // skip LAN/loopback/reserved addresses
-      const pk = b4a.toString(conn.remotePublicKey, 'hex');
+      // Pseudonymise before anything else touches the key, so the raw value
+      // exists only as an argument here and is never stored or logged.
+      const pk = pseudonymOf({ publicKey: conn.remotePublicKey, salt });
       observations.record({
-        publicKey: pk,
+        keyHash: pk,
         host,
         app: appName,
         at: Date.now()
@@ -171,8 +208,11 @@ export async function run(ctx) {
           tag = 'new';
         }
       }
+      // Log the /24, not host:port. ops/scheduled-observe.sh appends this to
+      // scan.log, so a full address here would persist exactly the data the
+      // database goes out of its way not to keep.
       console.log(
-        `+ peer ${(host + ':' + port).padEnd(21)} ${pk.slice(0, 12)}… ${tag}`
+        `+ peer ${(prefixOf(host) + '.x').padEnd(18)} ${pk.slice(0, 12)}… ${tag}`
       );
     };
     // address is ready once the encrypted stream opens

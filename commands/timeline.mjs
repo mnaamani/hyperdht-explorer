@@ -9,6 +9,7 @@ import {
   prefixOf
 } from '../db.mjs';
 import { htmlPath, ensureDirs } from '../paths.mjs';
+import { ensureVendor } from '../vendor/index.mjs';
 
 // Render how the DHT network evolves over time -> timeline.html.
 // Views:
@@ -157,15 +158,15 @@ export function run(ctx) {
   }
   const stability = binStability(nodes.map((row) => row.seen_count || 1));
 
-  // identity stability: aggregate observation count per public_key across all the
-  // endpoints (host:port) it was seen from, then bin the same way.
+  // identity stability: aggregate observation count per peer pseudonym across
+  // all the networks it was seen from, then bin the same way. Pseudonyms are
+  // scoped to a salt period (a month), so a peer active across a boundary
+  // contributes to two bins rather than one — this reads as slightly less
+  // stability than there really is, which is the safe direction to be wrong in.
   const obsRows = observationsRepo(db).keyCounts();
   const obsByKey = new Map();
   for (const obs of obsRows) {
-    obsByKey.set(
-      obs.public_key,
-      (obsByKey.get(obs.public_key) || 0) + obs.count
-    );
+    obsByKey.set(obs.key_hash, (obsByKey.get(obs.key_hash) || 0) + obs.count);
   }
   const identity = binStability([...obsByKey.values()]);
 
@@ -246,7 +247,7 @@ export function run(ctx) {
   <meta charset="utf-8" />
   <title>hyperdht-explorer · timeline</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="vendor/chart.umd.js"></script>
   <style>
     html, body { margin: 0; background: ${BG}; color: ${TEXT};
       font-family: Inter, system-ui, -apple-system, sans-serif; }
@@ -472,6 +473,7 @@ export function run(ctx) {
 `;
 
   ensureDirs();
+  ensureVendor('chart');
   const out = htmlPath('timeline.html');
   fs.writeFileSync(out, html);
   console.log('timeline: wrote timeline.html');

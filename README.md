@@ -83,6 +83,8 @@ expect — see [SCHEDULING.md](./SCHEDULING.md).
 | `bare bin.mjs render:topo [--refresh]`                            | Render `topology.html` — BGP/AS interconnection of the hosting networks.                                       |
 | `bare bin.mjs rpki [--refresh]`                                   | Fetch RPKI route-origin validity for the hosting prefixes (RIPEstat).                                          |
 | `bare bin.mjs stats`                                              | Print a read-only health report: db size, per-table row counts, freshness.                                     |
+| `bare bin.mjs render:privacy`                                     | Render `privacy.html`, `scanner.html` and `.well-known/security.txt`.                                          |
+| `bare bin.mjs exclude add\|remove\|list <ip\|/24>`                | Stop collecting a network and purge what's already stored (see [PRIVACY.md](PRIVACY.md)).                      |
 
 `seeders` and `observe` accept a **preset** in place of a `pear://` link — a
 short name for a well-known public app, which also becomes the default tag.
@@ -214,8 +216,10 @@ invite keys and are not discoverable.
 
 ### Map (`commands/map.mjs`)
 
-Generates a self-contained `map.html` (Leaflet + markercluster from CDN, data
-embedded inline). Networks are grouped by `/24`, one marker each:
+Generates `map.html` with the data embedded inline. Leaflet and markercluster
+are served from `public/vendor/` rather than a CDN, so viewing the page
+discloses nothing to a third party except the basemap tile request. Networks are
+grouped by `/24`, one marker each:
 
 - **radius** scales with node count
 - **colour** encodes stability (sessions seen): green = stable, red = transient,
@@ -346,8 +350,45 @@ crawler appends to at the end of every run, so it fills in as you scan more.
 | `paths.mjs`                   | resolves the OS app-data dir + DB / HTML paths                                                         |
 | `app.cjs`, `workers/main.cjs` | pear-runtime OTA self-updater (optional, `--updates`)                                                  |
 | `scripts/make.js`             | picks the `bare-build` target for the host platform                                                    |
+| `vendor/*`                    | checked-in Leaflet / Chart.js / D3, served from our own origin instead of a CDN                        |
+| `scripts/vendor-sync.js`      | refreshes `vendor/` from the pinned devDependencies (`npm run vendor:sync`)                            |
+| `PRIVACY.md`, `docs/*.md`     | data-protection notes: operator guide, legitimate-interests assessment, Art. 30 record, DPIA screening |
 | `<app-data>/nodes.db`         | SQLite database (generated, outside the repo)                                                          |
-| `<app-data>/public/*.html`    | rendered map / ring / timeline / summary / topology (generated)                                        |
+| `<app-data>/public/*.html`    | rendered map / ring / timeline / summary / topology / privacy (generated)                              |
+| `<app-data>/public/vendor/`   | the vendored browser libraries, copied out at render time (generated)                                  |
+
+## Privacy and data protection
+
+This crawler records addresses of participants in a public network, so it
+processes personal data and the GDPR applies (the reference deployment runs from
+Iceland, an EEA member; the supervisory authority is Persónuvernd). The design
+keeps the exposure small:
+
+- **Connecting peers are never stored identifiably.** `observe` reduces the
+  address to its `/24` before writing, and replaces the peer's public key with a
+  pseudonym — a keyed hash under a secret salt that rotates monthly and is then
+  destroyed, so peers cannot be followed across periods by anyone, including the
+  operator.
+- **Short retention.** Observations 14 days, routing nodes 72 hours, both pruned
+  automatically on every run.
+- **Nothing identifying is published.** Reports show networks and aggregates;
+  residential/mobile `/24`s with fewer than three participants are widened to a
+  `/16` with the city withheld.
+- **Exclusion is enforced in code.** `exclude add <network>` purges every table
+  and blocks re-collection at the point of writing, so no collector can bypass
+  it.
+- **No CDNs, cookies, analytics or trackers** on the published pages — the only
+  third-party request any page makes is for map tiles, which the notice
+  discloses.
+
+**If you run your own instance, you are its controller** — this repository's
+notice covers only the deployment that publishes it. Read
+[PRIVACY.md](PRIVACY.md) before publishing one: it has the operator checklist
+(set `CONTACT_EMAIL` in `commands/privacy.mjs`, point the crawler IP's reverse
+DNS at `scanner.html`, and so on) and how to handle objection and access
+requests. The assessments behind those choices are in
+[`docs/lia.md`](docs/lia.md), [`docs/ropa.md`](docs/ropa.md) and
+[`docs/dpia.md`](docs/dpia.md).
 
 ## License
 

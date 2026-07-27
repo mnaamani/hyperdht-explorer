@@ -12,6 +12,7 @@
     "format": "prettier . --write && lunte --fix",
     "lint": "prettier . --check && lunte && eslint .",
     "make": "node scripts/make.js",
+    "vendor:sync": "node scripts/vendor-sync.js",
     "make:darwin-arm64": "bare-build --name hyperdht-explorer --standalone --host darwin-arm64 --out ./out/darwin-arm64 bin.mjs",
     "make:darwin-x64": "bare-build --name hyperdht-explorer --standalone --host darwin-x64 --out ./out/darwin-x64 bin.mjs",
     "make:linux-arm64": "bare-build --name hyperdht-explorer --standalone --host linux-arm64 --out ./out/linux-arm64 bin.mjs",
@@ -43,7 +44,11 @@
   "devDependencies": {
     "bare-build": "^1.0.1",
     "brittle": "^4.0.2",
+    "chart.js": "^4.4.1",
+    "d3": "^7.9.0",
     "eslint": "^10.6.0",
+    "leaflet": "^1.9.4",
+    "leaflet.markercluster": "^1.5.3",
     "lunte": "^1.8.2",
     "prettier": "^3.8.5",
     "prettier-config-holepunch": "^2.0.0"

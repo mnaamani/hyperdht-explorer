@@ -8,3 +8,11 @@ out/
 
 # Runtime logs written by the ops cron wrappers.
 scan.log
+
+# Checked-in third-party browser libraries (Leaflet / Chart.js / D3), served
+# from our own origin instead of a CDN. They are upstream build output copied
+# verbatim by `npm run vendor:sync` — reformatting them would make the diff
+# against upstream meaningless. vendor/index.mjs is OUR code, so it is not
+# ignored (a bare `vendor` would exclude the whole directory).
+vendor/*.js
+vendor/*.css

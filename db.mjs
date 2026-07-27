@@ -1,4 +1,6 @@
 import { DatabaseSync } from 'bare-sqlite';
+import sodium from 'sodium-universal';
+import b4a from 'b4a';
 import { dbPath, ensureDirs } from './paths.mjs';
 
 // Shared database access for the hyperdht-explorer tools (crawler, geo, map).
@@ -9,6 +11,18 @@ import { dbPath, ensureDirs } from './paths.mjs';
 //           share the first three octets sit in the same network and therefore
 //           the same geo-location, so we only ever hit the geoip API once per
 //           /24. This caps API usage hard and respects ip-api.com rate limits.
+//
+// Data-protection note: everything the DB learns about a peer is either an
+// address (nodes) or a pseudonym (observations). See PRIVACY.md and docs/lia.md
+// for why each field exists; the short version is that `observations` never
+// stores a peer's real public key (see pseudonymOf) and no table is allowed to
+// hold a network an operator has excluded (see exclusionsRepo).
+
+// Pseudonym length in bytes. 16 bytes of keyed BLAKE2b is far beyond collision
+// range for the number of peers we will ever see, while being short enough that
+// nobody mistakes it for a real 32-byte hypercore key.
+const PSEUDONYM_BYTES = 16;
+const SALT_BYTES = 32;
 
 export function openDb(path = dbPath()) {
   ensureDirs(); // make sure the app-data dir exists before SQLite touches it
@@ -56,14 +70,43 @@ export function openDb(path = dbPath()) {
     -- prefixOf() immediately), so keying on the network both stops reconnect
     -- churn from inserting near-duplicate rows and keeps peer addresses out of
     -- the database entirely. Rows are pruned by last_seen — see observe.mjs.
+    --
+    -- key_hash is a PSEUDONYM, not the peer's public key: keyed BLAKE2b of the
+    -- real key under a salt that rotates monthly and is then destroyed (see
+    -- pseudonymsRepo). We only ever need "how many distinct peers", which a
+    -- pseudonym answers as well as an identifier does — but once the salt for a
+    -- period is gone, nobody (us included) can work back from a stored row to
+    -- the peer, or link that peer's rows across periods.
     CREATE TABLE IF NOT EXISTS observations (
-      public_key TEXT NOT NULL,
+      key_hash   TEXT NOT NULL,   -- pseudonym, scoped to the salt period
       prefix24   TEXT NOT NULL,   -- the /24, e.g. "143.198.58"
       app        TEXT,
       first_seen INTEGER NOT NULL,
       last_seen  INTEGER NOT NULL,
       count      INTEGER NOT NULL DEFAULT 1,
-      PRIMARY KEY (public_key, prefix24)
+      PRIMARY KEY (key_hash, prefix24)
+    );
+
+    -- The rotating salts behind observations.key_hash. One row per period; the
+    -- salt is generated on first use in that period and deleted once every
+    -- observation that could have used it has been pruned (period_end + the
+    -- retention window). Deleting the salt is what turns the surviving rows from
+    -- pseudonymous into effectively anonymous data.
+    CREATE TABLE IF NOT EXISTS pseudonym_salts (
+      period     TEXT PRIMARY KEY,  -- 'YYYY-MM'
+      salt       TEXT NOT NULL,     -- hex, ${SALT_BYTES} bytes
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL   -- period end + retention; purge after this
+    );
+
+    -- Networks that have asked not to be recorded (GDPR Art. 21 objection), or
+    -- that the operator excludes for any other reason. Enforced at the point of
+    -- WRITE inside nodesRepo/observationsRepo, so no command can bypass it by
+    -- forgetting to check. Adding an entry also purges what is already stored.
+    CREATE TABLE IF NOT EXISTS exclusions (
+      prefix24   TEXT PRIMARY KEY,  -- the /24, e.g. "143.198.58"
+      reason     TEXT,
+      created_at INTEGER NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS snapshots (
@@ -166,8 +209,106 @@ export function openDb(path = dbPath()) {
     db.exec('ALTER TABLE snapshots ADD COLUMN observed INTEGER');
   }
   migrateObservationsToPrefix(db);
+  migrateObservationsToPseudonyms(db);
 
   return db;
+}
+
+// Current salt period for a timestamp: month-granular, plus the instant the
+// period closes. Monthly is the trade-off point — short enough that a peer's
+// pseudonym stops following it around within a couple of months, long enough
+// that "distinct participants" and returning-vs-new stay meaningful inside a
+// reporting period.
+export function saltPeriodOf(at) {
+  const date = new Date(at);
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const pad = String(month + 1).padStart(2, '0');
+  return { period: `${year}-${pad}`, periodEnd: Date.UTC(year, month + 1, 1) };
+}
+
+// Pseudonymise a peer's public key under a period salt: keyed BLAKE2b, i.e. a
+// MAC rather than a bare hash. A bare hash of a 32-byte public key would be
+// trivially reversible for anyone holding a list of candidate keys (the input
+// space is enumerable if you know who you are looking for) — the secret salt is
+// what makes the mapping one-way in practice, and destroying the salt is what
+// makes it one-way permanently.
+export function pseudonymOf({ publicKey, salt }) {
+  const input = b4a.isBuffer(publicKey)
+    ? publicKey
+    : b4a.from(publicKey, 'hex');
+  const out = b4a.alloc(PSEUDONYM_BYTES);
+  sodium.crypto_generichash(out, input, salt);
+  return b4a.toString(out, 'hex');
+}
+
+// Rebuild an observations table that still stores raw peer public keys.
+//
+// The old rows can't be re-keyed under a period salt — we don't know which
+// period each sighting belongs to, and back-dating them would be a lie. Instead
+// every surviving row is hashed under ONE throwaway salt that exists only for
+// the duration of this function and is never written to disk. That keeps the
+// table's only real use (counting distinct peers) intact while making the
+// pre-migration keys unrecoverable, which is the whole point of the change.
+//
+// Rows can collide after hashing only if they already shared a public key and
+// prefix, which the old PK made impossible — the ON CONFLICT merge is belt and
+// braces for a hand-edited database.
+function migrateObservationsToPseudonyms(db) {
+  const obsCols = new Set(
+    db
+      .prepare('PRAGMA table_info(observations)')
+      .all()
+      .map((col) => col.name)
+  );
+  if (!obsCols.has('public_key')) {
+    return;
+  }
+  const salt = b4a.alloc(SALT_BYTES);
+  sodium.randombytes_buf(salt);
+  const rows = db
+    .prepare(
+      `SELECT public_key, prefix24, app, first_seen, last_seen, count
+       FROM observations`
+    )
+    .all();
+  db.exec(`
+    CREATE TABLE observations_hashed (
+      key_hash   TEXT NOT NULL,
+      prefix24   TEXT NOT NULL,
+      app        TEXT,
+      first_seen INTEGER NOT NULL,
+      last_seen  INTEGER NOT NULL,
+      count      INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (key_hash, prefix24)
+    );
+  `);
+  const insert = db.prepare(`
+    INSERT INTO observations_hashed
+      (key_hash, prefix24, app, first_seen, last_seen, count)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(key_hash, prefix24) DO UPDATE SET
+      first_seen = MIN(observations_hashed.first_seen, excluded.first_seen),
+      last_seen  = MAX(observations_hashed.last_seen, excluded.last_seen),
+      count      = observations_hashed.count + excluded.count
+  `);
+  db.exec('BEGIN;');
+  for (const row of rows) {
+    insert.run(
+      pseudonymOf({ publicKey: row.public_key, salt }),
+      row.prefix24,
+      row.app,
+      row.first_seen,
+      row.last_seen,
+      row.count
+    );
+  }
+  db.exec(`
+    DROP TABLE observations;
+    ALTER TABLE observations_hashed RENAME TO observations;
+    COMMIT;
+  `);
+  sodium.sodium_memzero(salt);
 }
 
 // Rebuild a pre-/24 observations table: PK (public_key, host, port) ->
@@ -254,6 +395,7 @@ function migrateObservationsToPrefix(db) {
 // ---------------------------------------------------------------------------
 
 export function nodesRepo(db) {
+  const excluded = excludedPrefixes(db);
   const stmts = {
     priorSighting: db.prepare(
       'SELECT first_seen, sessions FROM nodes WHERE host = ? AND port = ?'
@@ -342,18 +484,37 @@ export function nodesRepo(db) {
     `)
   };
 
+  // Whether a host belongs to a network that has opted out of collection. All
+  // three write paths check it, so an excluded address can never enter `nodes`
+  // regardless of which command discovered it.
+  function isExcluded(host) {
+    return excluded.has(prefixOf(host));
+  }
+
   return {
     // Prior state of a node before this run's sighting (undefined if brand new).
     priorSighting: ({ host, port }) => stmts.priorSighting.get(host, port),
     // Record the first time we've seen a node during the current run.
-    recordFirstSightingThisRun: ({ host, port, id, at }) =>
-      stmts.firstSightingThisRun.run(host, port, id, at, at),
+    recordFirstSightingThisRun: ({ host, port, id, at }) => {
+      if (isExcluded(host)) {
+        return;
+      }
+      stmts.firstSightingThisRun.run(host, port, id, at, at);
+    },
     // Record a repeat sighting of a node already seen earlier this run.
-    recordRepeatSighting: ({ host, port, id, at }) =>
-      stmts.repeatSighting.run(at, id, host, port),
+    recordRepeatSighting: ({ host, port, id, at }) => {
+      if (isExcluded(host)) {
+        return;
+      }
+      stmts.repeatSighting.run(at, id, host, port);
+    },
     // Record/refresh an app-seeder relay endpoint (seeders.mjs).
-    recordSeederEndpoint: ({ host, port, app, at }) =>
-      stmts.seederEndpoint.run(host, port, at, at, app),
+    recordSeederEndpoint: ({ host, port, app, at }) => {
+      if (isExcluded(host)) {
+        return;
+      }
+      stmts.seederEndpoint.run(host, port, at, at, app);
+    },
     // Probe outcome (probe.mjs): reachable with an RTT, or unreachable.
     markAlive: ({ host, port, rttMs, at }) =>
       stmts.markAlive.run(rttMs, at, host, port),
@@ -391,44 +552,52 @@ export function nodesRepo(db) {
 }
 
 export function observationsRepo(db) {
+  const excluded = excludedPrefixes(db);
   const stmts = {
     upsert: db.prepare(`
       INSERT INTO observations
-        (public_key, prefix24, app, first_seen, last_seen, count)
+        (key_hash, prefix24, app, first_seen, last_seen, count)
       VALUES (?, ?, ?, ?, ?, 1)
-      ON CONFLICT(public_key, prefix24) DO UPDATE SET
+      ON CONFLICT(key_hash, prefix24) DO UPDATE SET
         last_seen = excluded.last_seen, count = count + 1
     `),
     countParticipants: db.prepare(
-      'SELECT COUNT(DISTINCT public_key) AS n FROM observations'
+      'SELECT COUNT(DISTINCT key_hash) AS n FROM observations'
     ),
     countParticipantsForApp: db.prepare(
-      'SELECT COUNT(DISTINCT public_key) AS n FROM observations WHERE app = ?'
+      'SELECT COUNT(DISTINCT key_hash) AS n FROM observations WHERE app = ?'
     ),
     distinctKeysForApp: db.prepare(
-      'SELECT DISTINCT public_key FROM observations WHERE app = ?'
+      'SELECT DISTINCT key_hash FROM observations WHERE app = ?'
     ),
     distinctPrefixesForApp: db.prepare(
       'SELECT DISTINCT prefix24 FROM observations WHERE app = ?'
     ),
     distinctPrefixes: db.prepare('SELECT DISTINCT prefix24 FROM observations'),
-    all: db.prepare('SELECT prefix24, app, public_key FROM observations'),
+    all: db.prepare('SELECT prefix24, app, key_hash FROM observations'),
     allDetailed: db.prepare(
-      `SELECT public_key, prefix24, app, first_seen, last_seen, count
+      `SELECT key_hash, prefix24, app, first_seen, last_seen, count
        FROM observations`
     ),
-    keyCounts: db.prepare('SELECT public_key, count FROM observations'),
+    keyCounts: db.prepare('SELECT key_hash, count FROM observations'),
     pruneStale: db.prepare('DELETE FROM observations WHERE last_seen < ?')
   };
   return {
     // Record a connecting peer as aggregate health (observe.mjs). Takes the
-    // host but stores only its /24 — the full address is never persisted.
-    record: ({ publicKey, host, app, at }) =>
-      stmts.upsert.run(publicKey, prefixOf(host), app, at, at),
+    // host but stores only its /24 — the full address is never persisted — and
+    // a pseudonym rather than the peer's public key. Silently does nothing for
+    // an excluded network; the caller does not get to decide.
+    record: ({ keyHash, host, app, at }) => {
+      const prefix = prefixOf(host);
+      if (excluded.has(prefix)) {
+        return;
+      }
+      stmts.upsert.run(keyHash, prefix, app, at, at);
+    },
     countDistinctParticipants: () => stmts.countParticipants.get().n,
     countDistinctForApp: (app) => stmts.countParticipantsForApp.get(app).n,
     distinctKeysForApp: (app) =>
-      stmts.distinctKeysForApp.all(app).map((row) => row.public_key),
+      stmts.distinctKeysForApp.all(app).map((row) => row.key_hash),
     distinctPrefixesForApp: (app) =>
       stmts.distinctPrefixesForApp.all(app).map((row) => row.prefix24),
     distinctPrefixes: () =>
@@ -439,6 +608,86 @@ export function observationsRepo(db) {
     keyCounts: () => stmts.keyCounts.all(),
     // Retention: drop observations whose last sighting predates `cutoff`.
     pruneStaleBefore: (cutoff) => stmts.pruneStale.run(cutoff).changes
+  };
+}
+
+// The rotating salts behind observations.key_hash.
+export function pseudonymsRepo(db) {
+  const stmts = {
+    get: db.prepare('SELECT salt FROM pseudonym_salts WHERE period = ?'),
+    insert: db.prepare(`
+      INSERT INTO pseudonym_salts (period, salt, created_at, expires_at)
+      VALUES (?, ?, ?, ?)
+    `),
+    purge: db.prepare('DELETE FROM pseudonym_salts WHERE expires_at < ?'),
+    count: db.prepare('SELECT COUNT(*) AS n FROM pseudonym_salts')
+  };
+  return {
+    // Get (or mint) the salt for a period. `retainMs` is the observation
+    // retention window: the salt must outlive the last row that could have
+    // used it, which is period end plus one retention window.
+    saltFor: ({ period, periodEnd, retainMs, at }) => {
+      const existing = stmts.get.get(period);
+      if (existing) {
+        return b4a.from(existing.salt, 'hex');
+      }
+      const salt = b4a.alloc(SALT_BYTES);
+      sodium.randombytes_buf(salt);
+      stmts.insert.run(
+        period,
+        b4a.toString(salt, 'hex'),
+        at,
+        periodEnd + retainMs
+      );
+      return salt;
+    },
+    // Destroy salts whose observations have all been pruned. Returns how many
+    // went; after this the matching rows can no longer be traced to a peer.
+    purgeExpired: (now) => stmts.purge.run(now).changes,
+    count: () => stmts.count.get().n
+  };
+}
+
+// Networks excluded from collection. Kept as a plain Set read at repo
+// construction: writes happen thousands of times per run and the list is tiny
+// and changes rarely. The trade-off is that a long-running `observe` will not
+// notice an exclusion added mid-run — it takes effect on the next run, and
+// `exclude add` purges anything already stored, so nothing lingers.
+function excludedPrefixes(db) {
+  const rows = db.prepare('SELECT prefix24 FROM exclusions').all();
+  return new Set(rows.map((row) => row.prefix24));
+}
+
+export function exclusionsRepo(db) {
+  const stmts = {
+    add: db.prepare(`
+      INSERT INTO exclusions (prefix24, reason, created_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(prefix24) DO UPDATE SET reason = excluded.reason
+    `),
+    remove: db.prepare('DELETE FROM exclusions WHERE prefix24 = ?'),
+    list: db.prepare('SELECT * FROM exclusions ORDER BY created_at'),
+    purgeNodes: db.prepare('DELETE FROM nodes WHERE host LIKE ?'),
+    purgeObservations: db.prepare(
+      'DELETE FROM observations WHERE prefix24 = ?'
+    ),
+    purgeGeo: db.prepare('DELETE FROM geo WHERE prefix = ?'),
+    purgeRpki: db.prepare('DELETE FROM rpki WHERE prefix24 = ?')
+  };
+  return {
+    add: ({ prefix24, reason, at }) => stmts.add.run(prefix24, reason, at),
+    remove: (prefix24) => stmts.remove.run(prefix24).changes,
+    list: () => stmts.list.all(),
+    prefixes: () => excludedPrefixes(db),
+    // Delete everything already stored about a /24. `nodes` is keyed by full
+    // host so it needs a prefix match; the LIKE pattern is anchored with the
+    // trailing dot so "1.2.3" can't also match "1.2.30".
+    purge: (prefix24) => ({
+      nodes: stmts.purgeNodes.run(`${prefix24}.%`).changes,
+      observations: stmts.purgeObservations.run(prefix24).changes,
+      geo: stmts.purgeGeo.run(prefix24).changes,
+      rpki: stmts.purgeRpki.run(prefix24).changes
+    })
   };
 }
 
@@ -712,6 +961,37 @@ export function hostKind(geoRow) {
     return 'residential';
   }
   return 'unknown';
+}
+
+// Below this many participants, a /24 is not named on a published page — see
+// publishedPrefix. Three is the smallest threshold that still means "more than
+// a pair", and the rows it hides are a tiny fraction of any real crawl.
+export const MIN_PUBLISHED_GROUP = 3;
+
+// Whether naming a network on a public page would effectively name a person.
+// Only end-user networks qualify: a datacenter /24 with one node is a machine
+// in a rack, but a residential or mobile /24 with one participant is close
+// enough to one household that the operator's subscriber records would finish
+// the job. Aggregate counts are unaffected — this governs display only.
+export function isSmallEndUserNetwork({ kind, count }) {
+  const endUser = kind === 'residential' || kind === 'mobile';
+  return endUser && count < MIN_PUBLISHED_GROUP;
+}
+
+// The network label to publish for a /24: the /24 itself, or the covering /16
+// when naming it would single someone out. Widening (rather than dropping the
+// row) keeps the country/operator breakdowns honest — the participant is still
+// counted, just not located to a subnet. Returns a complete CIDR string so no
+// caller has to remember which suffix now applies.
+export function publishedNetwork({ prefix, kind, count }) {
+  const parts = String(prefix).split('.');
+  if (parts.length < 3) {
+    return String(prefix);
+  }
+  if (!isSmallEndUserNetwork({ kind, count })) {
+    return `${prefix}.0/24`;
+  }
+  return `${parts[0]}.${parts[1]}.0.0/16`;
 }
 
 // IPv4 /24 network key. Non-IPv4 hosts fall back to the host itself so they

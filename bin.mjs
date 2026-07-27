@@ -32,9 +32,12 @@ const COMMANDS = {
   'render:timeline': () => import('./commands/timeline.mjs'),
   'render:summary': () => import('./commands/summary.mjs'),
   'render:topo': () => import('./commands/topo.mjs'),
+  'render:privacy': () => import('./commands/privacy.mjs'),
   // inspect: read-only local state, no network
   paths: () => import('./commands/paths.mjs'),
-  stats: () => import('./commands/stats.mjs')
+  stats: () => import('./commands/stats.mjs'),
+  // govern: data-protection controls over what is collected and kept
+  exclude: () => import('./commands/exclude.mjs')
 };
 
 const HELP = `hyperdht-explorer v${pkg.version} — hyperdht network-health explorer
@@ -59,10 +62,14 @@ commands:
     render:timeline  timeline.html (time series)
     render:summary   summary.html (network tables)
     render:topo      topology.html (BGP/AS graph)     (--refresh)
+    render:privacy   privacy.html + scanner.html + .well-known/security.txt
 
   inspect — read-only local state (no network):
     paths            print the data/db/public storage paths
     stats            print nodes.db size, row counts, last scan/probe
+
+  govern — data-protection controls:
+    exclude          stop collecting a network + purge it  add|remove|list <ip | /24>
 
 global flags:
   --storage <dir>   override the data directory (default: OS app-data dir)

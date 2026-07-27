@@ -3,3 +3,10 @@
 # `npm run lint` off the bare-build standalone output (out/) and the ops cron log.
 out/
 scan.log
+
+# Checked-in third-party browser libraries (Leaflet / Chart.js / D3), served from our own
+# origin instead of a CDN. Upstream build output copied verbatim by `npm run vendor:sync`;
+# house style does not apply to it. vendor/index.mjs is OUR code and stays linted, hence
+# the file patterns rather than the directory.
+vendor/*.js
+vendor/*.css

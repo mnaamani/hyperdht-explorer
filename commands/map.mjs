@@ -6,12 +6,15 @@ import {
   observationsRepo,
   geoRepo,
   prefixOf,
-  hostKind
+  hostKind,
+  publishedNetwork,
+  isSmallEndUserNetwork
 } from '../db.mjs';
 import { htmlPath, ensureDirs } from '../paths.mjs';
+import { ensureVendor } from '../vendor/index.mjs';
 
 // Render the discovered + geo-located nodes onto an interactive world map.
-// Produces a self-contained map.html (Leaflet from CDN, data embedded inline),
+// Produces a self-contained map.html (Leaflet served locally, data embedded inline),
 // grouping nodes by /24 subnet (one marker per network). Marker colour encodes
 // stability: how many distinct crawl sessions the network's nodes have appeared
 // in (red = transient, green = long-lived / likely dedicated).
@@ -43,6 +46,7 @@ export function run(ctx) {
         country: geoRow.country,
         isp: geoRow.isp,
         org: geoRow.org,
+        kind: hostKind(geoRow),
         nodes: 0,
         hits: 0,
         maxSessions: 0,
@@ -75,11 +79,27 @@ export function run(ctx) {
     }
   }
 
-  // Set -> sorted array so it serialises to JSON for the page.
-  const points = [...groups.values()].map((group) => ({
-    ...group,
-    apps: [...group.apps].sort()
-  }));
+  // Set -> sorted array so it serialises to JSON for the page. `network` is the
+  // publishable label for the subnet — widened to a /16, with the city dropped,
+  // when the /24 is a small end-user network (see publishedNetwork in db.mjs).
+  // `prefix` itself is deliberately not carried into the page.
+  const points = [...groups.values()].map((group) => {
+    const small = isSmallEndUserNetwork({
+      kind: group.kind,
+      count: group.nodes
+    });
+    const { prefix, ...rest } = group;
+    return {
+      ...rest,
+      network: publishedNetwork({
+        prefix,
+        kind: group.kind,
+        count: group.nodes
+      }),
+      city: small ? null : group.city,
+      apps: [...group.apps].sort()
+    };
+  });
   const totalNodes = nodes.count();
   const located = points.reduce((sum, point) => sum + point.nodes, 0);
 
@@ -107,13 +127,19 @@ export function run(ctx) {
     if (obsRow.app) {
       a.apps.add(obsRow.app);
     }
-    a.peers.add(obsRow.public_key);
+    a.peers.add(obsRow.key_hash);
   }
   const observed = [...obs.values()].map((a) => ({
-    prefix: a.prefix,
+    network: publishedNetwork({
+      prefix: a.prefix,
+      kind: a.kind,
+      count: a.peers.size
+    }),
     lat: a.lat,
     lon: a.lon,
-    city: a.city,
+    city: isSmallEndUserNetwork({ kind: a.kind, count: a.peers.size })
+      ? null
+      : a.city,
     country: a.country,
     kind: a.kind,
     apps: [...a.apps].sort(),
@@ -179,11 +205,16 @@ export function run(ctx) {
   <meta charset="utf-8" />
   <title>hyperdht-explorer map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <!-- The basemap tiles are the one thing on this page still fetched from a
+       third party (they cannot be self-hosted at any sane size). no-referrer
+       keeps the tile server from learning which page requested them; it still
+       sees the visitor's IP, which the privacy notice discloses. -->
+  <meta name="referrer" content="no-referrer" />
+  <link rel="stylesheet" href="vendor/leaflet.css" />
+  <link rel="stylesheet" href="vendor/MarkerCluster.css" />
+  <link rel="stylesheet" href="vendor/MarkerCluster.Default.css" />
+  <script src="vendor/leaflet.js"></script>
+  <script src="vendor/leaflet.markercluster.js"></script>
   <style>
     html, body, #map { height: 100%; margin: 0; background: #1a1a1a; }
     /* The legend is a <details>: open on desktop, collapsed to a one-line
@@ -238,7 +269,8 @@ export function run(ctx) {
     const map = L.map('map', { worldCopyJump: true, preferCanvas: true })
       .setView([20, 0], 2);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
+      attribution: '&copy; OpenStreetMap &copy; CARTO &middot; <a href="privacy.html">privacy</a>',
+      subdomains: 'abcd', maxZoom: 19
     }).addTo(map);
 
     // colour by stability (distinct sessions seen)
@@ -277,7 +309,7 @@ export function run(ctx) {
 
     function popupHtml(p, probeLine) {
       return '<b>' + esc(p.city || '?') + ', ' + esc(p.country || '?') + '</b><br>' +
-        'network <code>' + esc(p.prefix) + '.0/24</code><br>' +
+        'network <code>' + esc(p.network) + '</code><br>' +
         (p.isp ? esc(p.isp) + '<br>' : '') +
         (p.org && p.org !== p.isp ? '<i>' + esc(p.org) + '</i><br>' : '') +
         '<hr style="margin:4px 0">' +
@@ -357,7 +389,7 @@ export function run(ctx) {
     function observedPopup(layer) {
       const row = layer.observed;
       return '<b>' + esc(row.city || '?') + ', ' + esc(row.country || '?') + '</b><br>' +
-        'network <code>' + esc(row.prefix) + '.0/24</code> &middot; ' + esc(row.kind) + '<br>' +
+        'network <code>' + esc(row.network) + '</code> &middot; ' + esc(row.kind) + '<br>' +
         '<hr style="margin:4px 0">' +
         '👁 ' + row.peers + ' observed participant(s)<br>' +
         (row.apps.length ? 'app: <b>' + esc(row.apps.join(', ')) + '</b>' : '');
@@ -475,6 +507,7 @@ export function run(ctx) {
 `;
 
   ensureDirs();
+  ensureVendor('leaflet');
   const out = htmlPath('map.html');
   fs.writeFileSync(out, html);
   console.log(`map: wrote map.html (${points.length} markers)`);

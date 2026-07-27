@@ -12,6 +12,7 @@ import {
   cleanName
 } from '../db.mjs';
 import { htmlPath, ensureDirs } from '../paths.mjs';
+import { ensureVendor } from '../vendor/index.mjs';
 
 // AS-level BGP topology of the networks hosting DHT nodes -> topology.html.
 //
@@ -296,7 +297,7 @@ export async function run(ctx) {
   <meta charset="utf-8" />
   <title>hyperdht-explorer · BGP topology</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <script src="vendor/d3.min.js"></script>
   <style>
     html, body { margin: 0; height: 100%; background: ${BG}; color: ${TEXT};
       font-family: Inter, system-ui, -apple-system, sans-serif; overflow: hidden; }
@@ -549,6 +550,7 @@ export async function run(ctx) {
 `;
 
   ensureDirs();
+  ensureVendor('d3');
   const out = htmlPath('topology.html');
   fs.writeFileSync(out, html);
   console.log('topo: wrote topology.html');

@@ -62,7 +62,9 @@ const TABLES = [
   'store_probes',
   'as_neighbours',
   'as_names',
-  'rpki'
+  'rpki',
+  'pseudonym_salts',
+  'exclusions'
 ];
 
 export function run() {
