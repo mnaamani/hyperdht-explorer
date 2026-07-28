@@ -79,11 +79,13 @@ expect — see [SCHEDULING.md](./SCHEDULING.md).
 | `bare bin.mjs render:ring`                                        | Render `ring.html` — a circular projection of the Kademlia keyspace.                                           |
 | `bare bin.mjs render:timeline`                                    | Render `timeline.html` — how the network evolves over time.                                                    |
 | `bare bin.mjs storeprobe`                                         | Measure DHT storage reliability (canary put/get persistence).                                                  |
+| `bare bin.mjs traffic [--minutes N]`                              | Count the inbound RPC load an ordinary routing node carries (count-only).                                      |
 | `bare bin.mjs render:summary`                                     | Render `summary.html` — sortable tables of nodes by ASN/operator and /24.                                      |
 | `bare bin.mjs render:topo [--refresh]`                            | Render `topology.html` — BGP/AS interconnection of the hosting networks.                                       |
 | `bare bin.mjs rpki [--refresh]`                                   | Fetch RPKI route-origin validity for the hosting prefixes (RIPEstat).                                          |
 | `bare bin.mjs stats`                                              | Print a read-only health report: db size, per-table row counts, freshness.                                     |
 | `bare bin.mjs render:privacy`                                     | Render `privacy.html`, `scanner.html` and `.well-known/security.txt`.                                          |
+| `bare bin.mjs render:stats`                                       | Render `stats.html` — the same report as `stats`, as a page.                                                   |
 | `bare bin.mjs exclude add\|remove\|list <ip\|/24>`                | Stop collecting a network and purge what's already stored (see [PRIVACY.md](PRIVACY.md)).                      |
 
 `seeders` and `observe` accept a **preset** in place of a `pear://` link — a
@@ -289,6 +291,54 @@ marked). Because a run spans the TTL, schedule it **separately** from the 15-min
 scan cycle (see [SCHEDULING.md](./SCHEDULING.md)). The
 [roadmap](./ROADMAP.md) covers using these same primitives to make
 hyperdht-explorer itself distributed.
+
+### Request load (`commands/traffic.mjs`)
+
+Every other collector here measures **supply** — how many nodes exist, where they
+are, whether they answer. None of them can tell you whether anyone is actually
+_using_ the network. That answer only arrives from the other direction: by being
+an ordinary routing node and counting the work other peers send you.
+
+```sh
+bare bin.mjs traffic --minutes 60          # default; ~20 min of that is warm-up
+bare bin.mjs traffic --force-persistent    # on a host with an open firewall
+```
+
+A node only starts receiving other peers' work once dht-rpc considers it stable
+(~20 minutes) and a NAT check confirms it is reachable. Counters **reset** at that
+moment, so the recorded window is the routable window and the rate isn't diluted
+by the warm-up. `--force-persistent` runs the NAT check at bootstrap instead of
+waiting — it cannot make a firewalled node routable (dht-rpc probes for real and
+bails), it only skips the wait on a host that would have passed anyway. Runs from
+a host that never became routable are still recorded, marked, and **excluded from
+the charts**: they measure that host's firewall, not the network.
+
+Results go to the `traffic` table and are charted on the **timeline** page
+(requests/min split into routing chatter vs application traffic, plus the command
+mix of the latest run) and summarised on the **stats** page. Because a run is long,
+schedule it separately — [`ops/scheduled-traffic.sh`](./ops/scheduled-traffic.sh).
+
+Results also include **target diversity**: how many _different_ topics or records
+were asked for, and the requests-per-target ratio that implies. A ratio near 1 is
+a long tail of one-off lookups; a high one means a smaller set of popular topics
+being asked for repeatedly.
+
+**This is count-only, deliberately.** Each inbound request carries an envelope
+(which command, when) and contents (`req.target` — _which_ topic or record is
+being looked up or announced — and, for `announce`, the announcer's public key).
+A node recording targets builds a topic → announcer-set index, which is exactly
+the capability this project exists not to have.
+
+So nothing is stored but tallies. `req.value` is never read. `req.target` is read
+only to pass it through a short one-way fingerprint keyed by a secret that is
+**random per run and never written to disk** — cardinality needs equality, and
+this is how you get equality without retention. A set of those fingerprints does
+live in memory for the run, but it cannot be tested against a candidate topic
+without the secret, and the secret is zeroed at the end. Counts are therefore
+comparable only _within_ a run: the same topic seen in two runs has two unrelated
+fingerprints. The same applies to sources — an in-memory set of /24s reported as
+a count and dropped. Nothing per-peer or per-target reaches the database, so
+there is no row here to prune, pseudonymise or exclude, because none is created.
 
 ### Reading the charts
 

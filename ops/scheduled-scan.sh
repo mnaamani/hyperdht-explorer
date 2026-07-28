@@ -61,6 +61,9 @@ hyperdht-explorer render:map      >>"$LOG" 2>&1
 hyperdht-explorer render:ring     >>"$LOG" 2>&1
 hyperdht-explorer render:summary  >>"$LOG" 2>&1
 hyperdht-explorer render:topo     >>"$LOG" 2>&1
+# Every cycle: stats.html carries the collector freshness dots, so it has to be
+# re-rendered often enough that "last run" on the page means something.
+hyperdht-explorer render:stats    >>"$LOG" 2>&1
 # The notice ships with the reports, so a page can never be published without
 # it. Re-rendering also rolls security.txt's mandatory Expires date forward.
 hyperdht-explorer render:privacy  >>"$LOG" 2>&1

@@ -89,6 +89,38 @@ separately, on a longer interval (it has its own lock and refreshes the timeline
 
 (Hourly — `0 * * * *` — is also fine and lighter.)
 
+### Request load (separate, long schedule)
+
+`traffic` counts the inbound RPC other peers send us while we act as an ordinary
+routing node. A node only becomes routable after ~20 minutes of stability plus a
+NAT check, so a run is long by nature — default 60 minutes, of which the first
+~20 measure nothing. Schedule
+[`ops/scheduled-traffic.sh`](./ops/scheduled-traffic.sh) well apart from the scan
+cycle (own lock; refreshes the stats + timeline pages afterwards):
+
+```cron
+# one measurement every 3 hours
+0 */3 * * * /Users/mokhtar/dht-explorer/client-app/ops/scheduled-traffic.sh
+```
+
+Configure via env (defaults shown):
+
+```sh
+TRAFFIC_MINUTES=60   # run length; keep comfortably under the cron interval
+TRAFFIC_FORCE=0      # 1 = run the NAT check at bootstrap, skipping the warm-up.
+                     # Only useful on a host with an open/consistent firewall;
+                     # it cannot make a firewalled node routable.
+```
+
+**This only produces data on a reachable host.** Behind a typical home NAT the
+node never becomes routable and every run records ~zero inbound work — correctly
+marked as such, and left off the charts. A VPS with the DHT port open is where
+this measurement is worth scheduling.
+
+Count-only: the command of each request is tallied and its target is never read,
+so unlike the other collectors nothing per-peer is written and there is nothing
+to prune.
+
 ### Observe (seed-and-listen, separate schedule)
 
 `observe` announces under a public topic and records connecting participants for a
@@ -143,6 +175,44 @@ installs (offline or non-announcing peers don't show up).
 0 */6 * * *  …   # every 6 hours
 ```
 
+## The whole crontab
+
+All five wrappers together, with the offsets staggered so their starts don't
+pile onto the same minute. Replace the path with your own:
+
+```cron
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# crawl + geo + probe, and re-render every page (incl. stats.html's freshness)
+*/15 * * * *  /Users/mokhtar/dht-explorer/client-app/ops/scheduled-scan.sh
+# storage-reliability decay probe (~22 min/run, spans the record TTL)
+5,35 * * * *  /Users/mokhtar/dht-explorer/client-app/ops/scheduled-storeprobe.sh
+# seeder census for the configured app
+20,50 * * * * /Users/mokhtar/dht-explorer/client-app/ops/scheduled-seeders.sh
+# seed-and-listen for connecting participants
+10 * * * *    OBSERVE_MINUTES=20 /Users/mokhtar/dht-explorer/client-app/ops/scheduled-observe.sh
+# inbound request load — long run, only useful on a reachable host (see below)
+25 */3 * * *  /Users/mokhtar/dht-explorer/client-app/ops/scheduled-traffic.sh
+```
+
+(Absolute paths throughout, deliberately. Cron puts a `VAR=value` line into the
+job's environment rather than substituting it itself, so whether a `$VAR` in the
+command expands depends on the shell cron hands it to — not worth relying on for
+the path to the script that has to run.)
+
+Each wrapper holds its own lock, so overlapping schedules skip rather than
+collide, and each runs its own DHT instance on its own socket — a `traffic` run
+spanning several scan cycles is fine. The staggering is about not starting five
+processes at once, not about correctness.
+
+**Two caveats before you paste this in.** `scheduled-traffic.sh` is worth
+scheduling only where the DHT port is actually reachable; behind a home NAT the
+node never becomes routable and every run records zero (correctly marked, and
+left off the charts). And `scheduled-observe.sh` **seeds by default** — it will
+use disk under `seed-store/` and replication bandwidth on every run. There is no
+env toggle for that one: add `--disable-seed` to the `observe` line inside the
+wrapper if you only want the passive listener.
+
 ## macOS gotcha: Full Disk Access
 
 On modern macOS, the cron daemon often needs **Full Disk Access** to run jobs:
@@ -163,8 +233,10 @@ sqlite3 ~/Library/Application\ Support/hyperdht-explorer/nodes.db "SELECT COUNT(
 ## Refreshing the visualizations
 
 `ops/scheduled-scan.sh` regenerates `render:timeline` / `render:map` / `render:ring`
-/ `render:summary` / `render:topo` at the end of every cycle (into the app-data
-`public/` dir). To rebuild them on demand instead:
+/ `render:summary` / `render:topo` / `render:stats` at the end of every cycle (into
+the app-data `public/` dir). `render:stats` is in that list because `stats.html`
+carries the collector freshness indicators — it has to be re-rendered often for
+"last run" on the page to mean anything. To rebuild them on demand instead:
 
 ```sh
 bare bin.mjs render:timeline && bare bin.mjs render:map && bare bin.mjs render:ring

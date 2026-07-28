@@ -1,132 +1,88 @@
-import fs from 'bare-fs';
-import { openDb, nodesRepo, snapshotsRepo, storeProbesRepo } from '../db.mjs';
-import { dbPath } from '../paths.mjs';
+import { collect, fmtBytes, fmtTime, fmtPct } from './dbreport.mjs';
 
 // Print a quick health/size report for nodes.db: on-disk size, per-table row
-// counts, and the freshness of the last scan / probe / storeprobe. Read-only —
-// handy for cron monitoring and for sanity-checking that the schedulers are
-// actually writing.
-
-function fmtBytes(bytes) {
-  if (bytes === null || bytes === undefined) {
-    return '—';
-  }
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0;
-  let value = bytes;
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024;
-    i++;
-  }
-  return `${i === 0 ? value : value.toFixed(1)} ${units[i]}`;
-}
-
-function fileSize(path) {
-  try {
-    return fs.statSync(path).size;
-  } catch {
-    return null;
-  }
-}
-
-// epoch ms -> "2026-06-29T12:00:00Z (3h ago)", or "never" for null/missing.
-function fmtTime(ts) {
-  if (!ts) {
-    return 'never';
-  }
-  const date = new Date(ts);
-  const diff = Date.now() - ts;
-  const abs = Math.abs(diff);
-  const seconds = Math.round(abs / 1000);
-  const minutes = Math.round(seconds / 60);
-  const hours = Math.round(minutes / 60);
-  const days = Math.round(hours / 24);
-  let rel;
-  if (seconds < 60) {
-    rel = `${seconds}s`;
-  } else if (minutes < 60) {
-    rel = `${minutes}m`;
-  } else if (hours < 48) {
-    rel = `${hours}h`;
-  } else {
-    rel = `${days}d`;
-  }
-  return `${date.toISOString().replace('.000', '')} (${diff < 0 ? 'in ' : ''}${rel}${diff < 0 ? '' : ' ago'})`;
-}
-
-const TABLES = [
-  'nodes',
-  'geo',
-  'observations',
-  'snapshots',
-  'store_probes',
-  'as_neighbours',
-  'as_names',
-  'rpki',
-  'pseudonym_salts',
-  'exclusions'
-];
+// counts, and the freshness of the last scan / probe / storeprobe / traffic run.
+// Read-only — handy for cron monitoring and for sanity-checking that the
+// schedulers are actually writing.
+//
+// The numbers come from dbreport.collect(), shared with `render:stats` so the
+// terminal and the published page can't disagree.
 
 export function run() {
-  const path = dbPath();
-  const db = openDb();
-  const nodes = nodesRepo(db);
-  const snapshots = snapshotsRepo(db);
-  const storeProbes = storeProbesRepo(db);
+  const report = collect();
 
-  // --- on-disk size (main file + WAL + shared-memory index) -------------------
-  const main = fileSize(path);
-  const wal = fileSize(`${path}-wal`);
-  const shm = fileSize(`${path}-shm`);
-  const total = (main ?? 0) + (wal ?? 0) + (shm ?? 0);
-
-  console.log(`database: ${path}`);
+  console.log(`database: ${report.path}`);
   console.log(
-    `size:     ${fmtBytes(total)}  (db ${fmtBytes(main)}, wal ${fmtBytes(wal)})`
+    `size:     ${fmtBytes(report.size.total)}` +
+      `  (db ${fmtBytes(report.size.main)}, wal ${fmtBytes(report.size.wal)})`
   );
 
-  // --- row counts -------------------------------------------------------------
-  // Generic diagnostic over a fixed table whitelist (TABLES) — the one place a
-  // table name is interpolated. No repo method: it spans every table by design,
-  // and the list is code-controlled, never user input.
   console.log('\nrows:');
-  for (const t of TABLES) {
-    const { n } = db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get();
-    console.log(`  ${t.padEnd(14)} ${n}`);
+  for (const row of report.rows) {
+    console.log(`  ${row.table.padEnd(14)} ${row.count}`);
   }
 
-  // --- node breakdown ---------------------------------------------------------
-  const breakdown = nodes.breakdown();
+  const breakdown = report.breakdown;
   console.log('\nnodes:');
   console.log(
-    `  alive ${breakdown.alive ?? 0} · dead ${breakdown.dead ?? 0} · unprobed ${breakdown.unprobed ?? 0} · seeders ${breakdown.seeders ?? 0}`
+    `  alive ${breakdown.alive ?? 0} · dead ${breakdown.dead ?? 0}` +
+      ` · unprobed ${breakdown.unprobed ?? 0} · seeders ${breakdown.seeders ?? 0}`
   );
   console.log(`  last seen:  ${fmtTime(breakdown.last_seen)}`);
   console.log(`  last probe: ${fmtTime(breakdown.last_ping)}`);
 
-  // --- last scan snapshot -----------------------------------------------------
-  const snap = snapshots.latest();
+  const snap = report.snapshot;
   console.log('\nlast scan snapshot:');
   if (snap) {
     console.log(`  ${fmtTime(snap.ts)}`);
     console.log(
-      `  total ${snap.total_nodes} · alive ${snap.alive} · new ${snap.new_nodes} · pruned ${snap.pruned} · countries ${snap.countries} · asns ${snap.asns} · median rtt ${snap.median_rtt ?? '—'}ms`
+      `  total ${snap.total_nodes} · alive ${snap.alive} · new ${snap.new_nodes}` +
+        ` · pruned ${snap.pruned} · countries ${snap.countries}` +
+        ` · asns ${snap.asns} · median rtt ${snap.median_rtt ?? '—'}ms`
     );
   } else {
     console.log('  none recorded');
   }
 
-  // --- last storeprobe --------------------------------------------------------
-  const sp = storeProbes.latest();
+  const probe = report.storeProbe;
   console.log('\nlast storeprobe:');
-  if (sp) {
-    console.log(`  ${fmtTime(sp.ts)}`);
+  if (probe) {
+    console.log(`  ${fmtTime(probe.ts)}`);
     console.log(
-      `  canaries ${sp.canaries} · put ${sp.put_ok} · get ${sp.get_ok} · persistence ${sp.persistence !== null && sp.persistence !== undefined ? (sp.persistence * 100).toFixed(0) + '%' : '—'}`
+      `  canaries ${probe.canaries} · put ${probe.put_ok} · get ${probe.get_ok}` +
+        ` · persistence ${fmtPct(probe.persistence)}`
     );
   } else {
     console.log('  none recorded');
   }
 
-  db.close();
+  const traffic = report.traffic;
+  console.log('\nlast traffic measurement:');
+  if (traffic) {
+    console.log(`  ${fmtTime(traffic.ts)}`);
+    console.log(
+      `  window ${(traffic.duration_s / 60).toFixed(0)}m` +
+        `${traffic.persistent ? '' : ' (never routable)'}` +
+        ` · ${traffic.requests} inbound req` +
+        ` (${report.trafficPerMin.toFixed(1)}/min)` +
+        ` · ${traffic.sources} network(s)`
+    );
+    if (traffic.targets !== null && traffic.targets !== undefined) {
+      console.log(
+        `  targets ${traffic.targets} distinct` +
+          ` from ${traffic.target_requests} app request(s)` +
+          (report.trafficPerTarget
+            ? ` (${report.trafficPerTarget.toFixed(1)} req/target)`
+            : '')
+      );
+    }
+    for (const entry of report.trafficMix.slice(0, 5)) {
+      console.log(
+        `    ${entry.name.padEnd(16)} ${String(entry.count).padStart(7)}` +
+          `  ${fmtPct(entry.share).padStart(4)}  ${entry.kind}`
+      );
+    }
+  } else {
+    console.log('  none recorded');
+  }
 }

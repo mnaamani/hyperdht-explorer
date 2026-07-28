@@ -25,6 +25,7 @@ const COMMANDS = {
   observe: () => import('./commands/observe.mjs'),
   rpki: () => import('./commands/rpki.mjs'),
   storeprobe: () => import('./commands/storeprobe.mjs'),
+  traffic: () => import('./commands/traffic.mjs'),
   // render: emit a self-contained .html report from already-collected data
   'render:index': () => import('./commands/index.mjs'),
   'render:map': () => import('./commands/map.mjs'),
@@ -33,6 +34,7 @@ const COMMANDS = {
   'render:summary': () => import('./commands/summary.mjs'),
   'render:topo': () => import('./commands/topo.mjs'),
   'render:privacy': () => import('./commands/privacy.mjs'),
+  'render:stats': () => import('./commands/statspage.mjs'),
   // inspect: read-only local state, no network
   paths: () => import('./commands/paths.mjs'),
   stats: () => import('./commands/stats.mjs'),
@@ -54,6 +56,7 @@ commands:
     observe          seed-and-listen for participants <pear://link | key | keet | pearpass> [app-name] [--minutes N]
     rpki             RIPEstat RPKI validity per /24    (--refresh)
     storeprobe       storage-reliability decay probe   (--canaries N --checkpoints …)
+    traffic          count inbound RPC load as a node  (--minutes N --report-every N --force-persistent)
 
   render — emit a self-contained .html report from collected data:
     render:index     index.html (landing page linking the reports)
@@ -63,6 +66,7 @@ commands:
     render:summary   summary.html (network tables)
     render:topo      topology.html (BGP/AS graph)     (--refresh)
     render:privacy   privacy.html + scanner.html + .well-known/security.txt
+    render:stats     stats.html (deployment + collector status)
 
   inspect — read-only local state (no network):
     paths            print the data/db/public storage paths

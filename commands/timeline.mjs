@@ -6,7 +6,10 @@ import {
   observationsRepo,
   snapshotsRepo,
   storeProbesRepo,
-  prefixOf
+  trafficRepo,
+  prefixOf,
+  TRAFFIC_COMMAND_COLUMNS,
+  TRAFFIC_COMMAND_CLASS
 } from '../db.mjs';
 import { htmlPath, ensureDirs } from '../paths.mjs';
 import { ensureVendor } from '../vendor/index.mjs';
@@ -18,6 +21,7 @@ import { ensureVendor } from '../vendor/index.mjs';
 //   3. Presence + survival - approx concurrent presence, and a retention curve
 //   4. Snapshot metrics    - per-scan series (total/alive/seeders/rtt/geo)
 //   5. Diurnal             - activity by hour-of-day (datacenter vs dynamic signature)
+//   6. Request load        - inbound RPC per minute + command mix (`traffic`)
 //
 // Views 1, 3, 5 are derived from each node's first_seen/last_seen/seen_count
 // (available now, improve as the observed span grows). View 2 reads the `observations`
@@ -31,6 +35,7 @@ export function run(ctx) {
   const nodes = nodesRepo(db).lifespans();
   const snapshots = snapshotsRepo(db).chronological();
   const storeProbes = storeProbesRepo(db).chronological();
+  const trafficRuns = trafficRepo(db).chronological();
 
   function fmt(ts) {
     const date = new Date(ts);
@@ -213,8 +218,68 @@ export function run(ctx) {
   store.decay = decay.map((point) => ({ x: point.m, y: point.replicas }));
   store.ttl = 20; // hyperdht record TTL (minutes), for the marker line
 
+  // --- inbound request load (traffic.mjs) --------------------------------------
+  // Only runs where we actually became routable are plotted. A run from a
+  // firewalled host measures ~zero inbound work, which is true of that host and
+  // says nothing about the network — averaging it in would understate real load.
+  // The skipped count is surfaced on the page rather than quietly dropped.
+  const routableRuns = trafficRuns.filter((row) => row.persistent);
+  const perMinute = (row, columns) => {
+    if (!row.duration_s) {
+      return 0;
+    }
+    const total = columns.reduce((sum, name) => sum + (row[name] || 0), 0);
+    return Math.round((total / row.duration_s) * 60 * 10) / 10;
+  };
+  const internalColumns = TRAFFIC_COMMAND_COLUMNS.filter(
+    (name) => TRAFFIC_COMMAND_CLASS.get(name) === 'internal'
+  );
+  const externalColumns = TRAFFIC_COMMAND_COLUMNS.filter(
+    (name) => TRAFFIC_COMMAND_CLASS.get(name) === 'external'
+  );
+
+  const load = {
+    labels: routableRuns.map((row) => fmt(row.ts)),
+    perMin: routableRuns.map((row) =>
+      row.duration_s
+        ? Math.round((row.requests / row.duration_s) * 60 * 10) / 10
+        : 0
+    ),
+    routingPerMin: routableRuns.map((row) => perMinute(row, internalColumns)),
+    appPerMin: routableRuns.map((row) => perMinute(row, externalColumns)),
+    sources: routableRuns.map((row) => row.sources),
+    skipped: trafficRuns.length - routableRuns.length,
+    mix: [],
+    // Target diversity. `targets` is NULL for runs recorded before this was
+    // measured — that is "unmeasured", not zero, so it maps to null and Chart.js
+    // leaves a gap rather than drawing a dive to the axis.
+    targets: routableRuns.map((row) => row.targets ?? null),
+    perTarget: routableRuns.map((row) =>
+      row.targets
+        ? Math.round((row.target_requests / row.targets) * 10) / 10
+        : null
+    ),
+    hasTargets: routableRuns.some((row) => row.targets !== null)
+  };
+
+  // Command mix from the most recent routable run. NULL columns (a command this
+  // build never counted) are dropped rather than shown as zero.
+  const latestRun = routableRuns[routableRuns.length - 1];
+  if (latestRun) {
+    for (const name of TRAFFIC_COMMAND_COLUMNS) {
+      if (latestRun[name]) {
+        load.mix.push({
+          name,
+          count: latestRun[name],
+          kind: TRAFFIC_COMMAND_CLASS.get(name)
+        });
+      }
+    }
+    load.mix.sort((left, right) => right.count - left.count);
+  }
+
   console.log(
-    `timeline: ${nodes.length} nodes over ${labels.length} hourly buckets, ${snapshots.length} snapshot(s), ${storeProbes.length} store-probe(s)`
+    `timeline: ${nodes.length} nodes over ${labels.length} hourly buckets, ${snapshots.length} snapshot(s), ${storeProbes.length} store-probe(s), ${routableRuns.length} traffic run(s)`
   );
 
   const DATA = {
@@ -227,7 +292,8 @@ export function run(ctx) {
     identity,
     diurnalAvg,
     snap,
-    store
+    store,
+    load
   };
 
   // --- Pear-inspired theme ----------------------------------------------------
@@ -317,6 +383,24 @@ export function run(ctx) {
       <h2>Replica decay — latest probe</h2>
       <p class="note">Average # of closest nodes still serving a record vs minutes since it was put. The drop-off near the dashed line is hyperdht's ~20-min record expiry (records vanish unless republished).</p>
       <div id="decayWrap"><canvas id="decay" height="90"></canvas></div>
+    </div>
+
+    <div class="card">
+      <h2>Inbound request load</h2>
+      <p class="note">From <code>traffic</code>: requests other peers sent <em>us</em> per minute while we were acting as an ordinary routing node, split into DHT routing chatter (<code>ping</code>, <code>find_node</code>…) and application traffic (<code>lookup</code>, <code>announce</code>, record get/put). Every other series on this page counts how many nodes <em>exist</em>; this one is the only measure of whether anyone is <strong>using</strong> them.</p>
+      <div id="loadWrap"><canvas id="load" height="100"></canvas></div>
+    </div>
+
+    <div class="card">
+      <h2>Target diversity</h2>
+      <p class="note">How many <em>different</em> topics or records were asked for in each run, and how many requests each one drew on average. A ratio near 1 is a long tail of one-off lookups; a high ratio means a smaller set of popular topics being asked for over and over. Only the count is measured — targets are passed through a one-way fingerprint keyed by a secret that is random per run and never stored, so this says how many, never which. Counts cover application requests only (<code>find_node</code>'s targets are random-walk probe points and would swamp the signal).</p>
+      <div id="targetsWrap"><canvas id="targets" height="100"></canvas></div>
+    </div>
+
+    <div class="card">
+      <h2>Request mix — latest run</h2>
+      <p class="note">Which commands made up that load. A network dominated by <code>lookup</code> is one where peers are mostly joining swarms; weight on <code>announce</code> means they are mostly advertising. Counts are of the command only — which topic or record each request was for is never read, so this cannot say <em>what</em> anyone was looking up.</p>
+      <div id="mixWrap"><canvas id="mix" height="90"></canvas></div>
     </div>
 
     <div class="card">
@@ -453,6 +537,64 @@ export function run(ctx) {
     } else {
       document.getElementById('decayWrap').innerHTML =
         '<div class="empty">No decay curve yet — run <code>npm run storeprobe</code> (≈22 min) and regenerate.</div>';
+    }
+
+    const skippedNote = D.load.skipped
+      ? ' <br>(' + D.load.skipped + ' run(s) omitted: the node never became routable, so they measured this host\\'s firewall, not the network.)'
+      : '';
+
+    if (D.load.labels.length) {
+      new Chart(load, {
+        data: { labels: D.load.labels, datasets: [
+          { type: 'line', label: 'requests/min', data: D.load.perMin, borderColor: '${GREEN}', backgroundColor: 'transparent', ...noPoint },
+          { type: 'line', label: 'routing chatter/min', data: D.load.routingPerMin, borderColor: '${CYAN}', backgroundColor: 'transparent', borderDash: [4, 3], ...noPoint },
+          { type: 'line', label: 'application/min', data: D.load.appPerMin, borderColor: '${SEEDER}', backgroundColor: 'transparent', borderDash: [4, 3], ...noPoint },
+          { type: 'line', label: 'distinct networks', data: D.load.sources, borderColor: '${GREEN2}', backgroundColor: 'transparent', yAxisID: 'y1', ...noPoint }
+        ] },
+        options: { responsive: true, interaction: { mode: 'index', intersect: false },
+          scales: { x: { ticks: { maxTicksLimit: 12 } },
+            y: { beginAtZero: true, title: { display: true, text: 'requests/min' } },
+            y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: '/24s' } } } }
+      });
+      if (skippedNote) {
+        document.getElementById('loadWrap').insertAdjacentHTML('beforeend',
+          '<div class="empty" style="text-align:left">' + skippedNote + '</div>');
+      }
+    } else {
+      document.getElementById('loadWrap').innerHTML =
+        '<div class="empty">No routable traffic runs yet — run <code>hyperdht-explorer traffic</code> (≈60 min, of which ~20 is warm-up before the node becomes routable) and regenerate.' + skippedNote + '</div>';
+    }
+
+    if (D.load.hasTargets) {
+      new Chart(targets, {
+        data: { labels: D.load.labels, datasets: [
+          { type: 'line', label: 'distinct targets', data: D.load.targets, borderColor: '${GREEN}', backgroundColor: 'rgba(182,255,60,0.12)', fill: true, spanGaps: false, ...noPoint },
+          { type: 'line', label: 'requests per target', data: D.load.perTarget, borderColor: '${SEEDER}', backgroundColor: 'transparent', yAxisID: 'y1', spanGaps: false, ...noPoint }
+        ] },
+        options: { responsive: true, interaction: { mode: 'index', intersect: false },
+          scales: { x: { ticks: { maxTicksLimit: 12 } },
+            y: { beginAtZero: true, title: { display: true, text: 'distinct targets' } },
+            y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'req/target' } } } }
+      });
+    } else {
+      document.getElementById('targetsWrap').innerHTML =
+        '<div class="empty">No target counts yet — recorded from the first <code>traffic</code> run on a build that measures them.</div>';
+    }
+
+    if (D.load.mix.length) {
+      new Chart(mix, {
+        type: 'bar',
+        data: { labels: D.load.mix.map(m => m.name), datasets: [
+          { label: 'requests', data: D.load.mix.map(m => m.count),
+            backgroundColor: D.load.mix.map(m => m.kind === 'internal' ? '${CYAN}' : '${GREEN}') } ] },
+        options: { indexAxis: 'y', responsive: true,
+          scales: { x: { beginAtZero: true, title: { display: true, text: 'requests in the window' } },
+            y: { grid: { display: false } } },
+          plugins: { legend: { display: false } } }
+      });
+    } else {
+      document.getElementById('mixWrap').innerHTML =
+        '<div class="empty">No request mix yet — needs a completed <code>traffic</code> run that became routable.</div>';
     }
 
     // diurnal heatmap

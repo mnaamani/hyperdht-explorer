@@ -23,16 +23,17 @@ deployment that publishes it.
 
 ## What the software collects
 
-| Table             | Contents                                                 | Personal data?                      | Retention                              |
-| ----------------- | -------------------------------------------------------- | ----------------------------------- | -------------------------------------- |
-| `nodes`           | IPv4 address + port of DHT routing nodes, liveness, RTT  | Yes — an IP address can be personal | `--prune-hours`, default 72h           |
-| `observations`    | /24 + peer **pseudonym** + app tag + counts              | Pseudonymous while the salt lives   | `--prune-days`, default 14d            |
-| `pseudonym_salts` | The rotating salts behind those pseudonyms               | The linking key itself              | Period end + retention, then destroyed |
-| `geo`             | Country/city/ASN per /24, from ip-api                    | No — describes a network            | Cache, refreshed on demand             |
-| `exclusions`      | /24s that asked not to be recorded                       | Minimal, and kept deliberately      | Until removed                          |
-| everything else   | Aggregate counts, BGP/RPKI facts about prefixes and ASNs | No                                  | —                                      |
+| Table             | Contents                                                             | Personal data?                                     | Retention                              |
+| ----------------- | -------------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------- |
+| `nodes`           | IPv4 address + port of DHT routing nodes, liveness, RTT              | Yes — an IP address can be personal                | `--prune-hours`, default 72h           |
+| `observations`    | /24 + peer **pseudonym** + app tag + counts                          | Pseudonymous while the salt lives                  | `--prune-days`, default 14d            |
+| `pseudonym_salts` | The rotating salts behind those pseudonyms                           | The linking key itself                             | Period end + retention, then destroyed |
+| `traffic`         | Counts of inbound RPC per run, by command; how many distinct targets | No — counters only, nothing per-peer or per-target | — (nothing to prune)                   |
+| `geo`             | Country/city/ASN per /24, from ip-api                                | No — describes a network                           | Cache, refreshed on demand             |
+| `exclusions`      | /24s that asked not to be recorded                                   | Minimal, and kept deliberately                     | Until removed                          |
+| everything else   | Aggregate counts, BGP/RPKI facts about prefixes and ASNs             | No                                                 | —                                      |
 
-### The two design decisions that matter
+### The three design decisions that matter
 
 **Connecting peers are never stored identifiably.** `observe` sees a full
 address and a real Ed25519 public key on every connection. Neither is written
@@ -41,6 +42,30 @@ those to a file). The key is passed through a keyed BLAKE2b under a salt that
 rotates monthly and is then deleted, so a pseudonym is comparable within a month
 and meaningless across months. Once a salt is destroyed the surviving rows can
 no longer be traced back to a peer by anyone, including the operator.
+
+**Request targets are counted, never kept.** `traffic` acts as an ordinary
+routing node and counts the requests other peers send it. Every one of those
+requests also carries a target — _which_ topic or record is being looked up or
+announced. Recording targets would build a topic → announcer-set index: a node
+in the right region of the keyspace could then answer "who is running this app"
+for any topic whose key is already known. That is the capability this project
+deliberately does not have.
+
+But how _many_ different targets were asked for is a real health signal (a long
+tail of one-off lookups is a different network from a handful of hot topics),
+and cardinality needs equality, which normally means keeping the values. So each
+target is reduced to a short one-way fingerprint under a secret that is **random
+per run and never written to disk**, and only the size of that set is stored.
+Two consequences worth being precise about: a set of fingerprints does sit in
+memory for the length of a run, but it cannot be tested against a candidate
+topic without the secret, and the secret is zeroed when the run ends. And the
+counts are only meaningful within one run — the same topic in two runs has two
+unrelated fingerprints, by design.
+
+`req.value` (record payloads, announce signatures) is never read at all. What
+reaches the database is counters, nothing per peer and nothing per target, which
+is why `traffic` is the only table with no retention rule: there is no row to
+expire.
 
 **Small end-user networks are not named in public.** A residential or mobile
 /24 with fewer than `MIN_PUBLISHED_GROUP` (3) participants is published as its

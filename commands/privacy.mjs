@@ -178,6 +178,34 @@ function privacyBody() {
       all.
     </div>
 
+    <h3>Requests our node receives</h3>
+    <p>
+      Once our node has been online long enough, other peers route their own DHT
+      work through it, exactly as they do through every other node. We count
+      those requests — how many arrived, and which of the protocol's commands
+      each one was — to measure whether the network is actually being used
+      rather than merely existing.
+    </p>
+    <div class="box">
+      <b>Counters only.</b> Each request also says <em>what</em> it is asking
+      for: which topic or record is being looked up or advertised. We count how
+      <em>many different</em> things were asked for, because a network where
+      everyone looks up something different is a different network from one
+      where a few things are looked up constantly. We do not record
+      <em>which</em>, and we are not able to: each one is put through a one-way
+      fingerprint under a secret that is generated fresh for each measurement
+      and never saved, so the fingerprints cannot be matched against any topic,
+      by us or by anyone who obtained them. Only the resulting count is kept.
+    </div>
+    <p>
+      Nothing is stored per peer, and nothing per request — no address, no key,
+      no request contents. Unlike everything else on this page, there is no row
+      here to retain, to delete, or to exclude a network from, because none is
+      ever created. The stored result of an hour of this is a handful of numbers
+      like "8,200 requests, of which 1,040 were lookups, asking for 320
+      different things".
+    </p>
+
     <h3>What is never collected</h3>
     <ul>
       <li>Message content, chat rooms, file contents or anything private. Only
@@ -187,6 +215,10 @@ function privacyBody() {
       <li>Full addresses of connecting peers, at any point after the connection
         itself.</li>
       <li>Anything from private, reserved or non-routable address ranges.</li>
+      <li>What anyone is looking up or advertising on the DHT. Our node handles
+        those requests like any other node, and counts them — including how many
+        different things were asked for — but never records, and cannot
+        reconstruct, what any of them were.</li>
     </ul>
 
     <h3>Legal basis</h3>
@@ -314,6 +346,8 @@ function scannerBody() {
         other peer on the network sends.</li>
       <li>Your peer connected to <em>us</em> while we were seeding a public
         application update feed, and we served you data.</li>
+      <li>Your node sent <em>us</em> a request, because our node was in your
+        routing table. We answered it, the way any node answers any other.</li>
     </ul>
 
     <h2>What it is not</h2>
@@ -325,6 +359,11 @@ function scannerBody() {
       <li>Not an attempt to identify you. Peer public keys are never stored,
         connecting peers' addresses are reduced to their /24, and individual
         addresses are never published.</li>
+      <li>Not surveillance of what you are looking up. Requests our node
+        receives are counted by type, and we count how many different things
+        were asked for — but each is fingerprinted one-way under a secret that
+        is discarded at the end of the measurement, so which they were is not
+        stored and cannot be recovered.</li>
     </ul>
 
     <h2>Make it stop</h2>

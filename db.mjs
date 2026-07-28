@@ -23,6 +23,67 @@ import { dbPath, ensureDirs } from './paths.mjs';
 // nobody mistakes it for a real 32-byte hypercore key.
 const PSEUDONYM_BYTES = 16;
 const SALT_BYTES = 32;
+// Fingerprints (see fingerprintOf) only need to be comparable with each other
+// inside one run, so they could in principle be shorter than a pseudonym — but
+// 16 is libsodium's crypto_generichash_BYTES_MIN, so this is the floor rather
+// than a choice. Far beyond collision range for the number of distinct targets
+// a single run can see.
+const FINGERPRINT_BYTES = 16;
+
+// The per-command counter columns of the `traffic` table (see trafficRepo and
+// commands/traffic.mjs). Two RPC vocabularies reach a node: dht-rpc's own
+// internal routing commands, and the application commands hyperdht layers on
+// top. Names are the protocol's, lower-cased, and the CREATE TABLE below is
+// generated from these arrays so a column can never drift from its counter.
+//
+// These are the whole of what `traffic` records about a request: WHICH command
+// it was. The target — which topic or record was being asked for — is only ever
+// counted for distinctness, never stored; see fingerprintOf and the long comment
+// in commands/traffic.mjs for why that boundary is the point of the feature.
+const TRAFFIC_INTERNAL_COLUMNS = [
+  'ping',
+  'ping_nat',
+  'find_node',
+  'down_hint',
+  'delayed_ping'
+];
+const TRAFFIC_EXTERNAL_COLUMNS = [
+  'peer_handshake',
+  'peer_holepunch',
+  'find_peer',
+  'lookup',
+  'announce',
+  'unannounce',
+  'mutable_put',
+  'mutable_get',
+  'immutable_put',
+  'immutable_get',
+  'plugin'
+];
+export const TRAFFIC_COMMAND_COLUMNS = [
+  ...TRAFFIC_INTERNAL_COLUMNS,
+  ...TRAFFIC_EXTERNAL_COLUMNS
+];
+// Which of the two vocabularies a column belongs to, for pages that split
+// "routing chatter" from "application traffic".
+export const TRAFFIC_COMMAND_CLASS = new Map([
+  ...TRAFFIC_INTERNAL_COLUMNS.map((name) => [name, 'internal']),
+  ...TRAFFIC_EXTERNAL_COLUMNS.map((name) => [name, 'external'])
+]);
+// The non-command columns, all INTEGER, all tallies. Kept as a list (rather than
+// only in the CREATE TABLE) so the migration loop and trafficRepo work from the
+// same source: a column named here but missing from an existing database is
+// ALTERed in, so the two can't drift apart silently.
+const TRAFFIC_FIXED_COLUMNS = [
+  'duration_s',
+  'persistent',
+  'firewalled',
+  'requests',
+  'sources',
+  'targets',
+  'target_requests',
+  'unknown'
+];
 
 export function openDb(path = dbPath()) {
   ensureDirs(); // make sure the app-data dir exists before SQLite touches it
@@ -157,6 +218,28 @@ export function openDb(path = dbPath()) {
       delay_s          INTEGER,   -- final re-check offset (seconds) — spans the record TTL
       decay            TEXT       -- JSON [{m, replicas}] decay curve across checkpoints
     );
+
+    -- Inbound RPC load measured by acting as an ordinary routing node
+    -- (commands/traffic.mjs). One row per run. COUNT-ONLY: every column is a
+    -- tally. No request target, no requester key and no address is stored --
+    -- "sources" and "targets" are cardinalities, counted in memory and thrown
+    -- away. There is no per-peer row here to prune, pseudonymise or exclude,
+    -- because none is ever created.
+    CREATE TABLE IF NOT EXISTS traffic (
+      ts              INTEGER PRIMARY KEY,  -- start of the window (epoch ms)
+      duration_s      INTEGER,  -- length of the window actually measured
+      persistent      INTEGER,  -- 1 = we were routable (non-ephemeral) for it
+      firewalled      INTEGER,  -- 1 = the NAT check found us unreachable
+      requests        INTEGER,  -- total inbound requests counted
+      sources         INTEGER,  -- distinct /24s that sent us a request
+      targets         INTEGER,  -- distinct application targets asked for (count
+                                -- only: see fingerprintOf, the targets
+                                -- themselves are never stored anywhere)
+      target_requests INTEGER,  -- requests those distinct targets came from, so
+                                -- requests-per-target is derivable
+      unknown         INTEGER,  -- requests whose command this build cannot name
+      ${TRAFFIC_COMMAND_COLUMNS.map((name) => `${name} INTEGER`).join(',\n      ')}
+    );
   `);
 
   // Migrate older databases that predate the ping-probe columns.
@@ -208,6 +291,23 @@ export function openDb(path = dbPath()) {
   ) {
     db.exec('ALTER TABLE snapshots ADD COLUMN observed INTEGER');
   }
+  // A newer build can measure something an older one didn't — a protocol
+  // command it has no column for, or a metric added later. Adding the column
+  // (rather than rebuilding) keeps the existing history: old rows read NULL for
+  // anything that build never counted, which is the honest value — it isn't
+  // zero, it's unmeasured. Every traffic column is INTEGER, so one loop covers
+  // the fixed metrics and the per-command counters alike.
+  const trafficCols = new Set(
+    db
+      .prepare('PRAGMA table_info(traffic)')
+      .all()
+      .map((col) => col.name)
+  );
+  for (const name of [...TRAFFIC_FIXED_COLUMNS, ...TRAFFIC_COMMAND_COLUMNS]) {
+    if (trafficCols.size && !trafficCols.has(name)) {
+      db.exec(`ALTER TABLE traffic ADD COLUMN ${name} INTEGER`);
+    }
+  }
   migrateObservationsToPrefix(db);
   migrateObservationsToPseudonyms(db);
 
@@ -239,6 +339,38 @@ export function pseudonymOf({ publicKey, salt }) {
     : b4a.from(publicKey, 'hex');
   const out = b4a.alloc(PSEUDONYM_BYTES);
   sodium.crypto_generichash(out, input, salt);
+  return b4a.toString(out, 'hex');
+}
+
+// A run-scoped secret for fingerprintOf. Random, never written to disk, and
+// meant to be zeroed (sodium.sodium_memzero) as soon as the run that made it is
+// done. Its whole job is to exist for one process lifetime.
+export function newFingerprintSecret() {
+  const secret = b4a.alloc(SALT_BYTES);
+  sodium.randombytes_buf(secret);
+  return secret;
+}
+
+// Reduce an opaque value to a short one-way fingerprint, so distinct values can
+// be COUNTED without any of them being retained.
+//
+// `traffic` needs to know how many different DHT targets were asked for, which
+// needs equality between requests, which normally means keeping the targets.
+// Keeping them is exactly what must not happen: a set of the topics being
+// looked up is the index this project refuses to build. Fingerprinting under a
+// secret that (a) is random per run and (b) never leaves memory means the thing
+// held in RAM is not a target and cannot be turned back into one — a target
+// space is enumerable, so an unkeyed hash would be trivially reversible, and
+// the secret is what removes that.
+//
+// Same primitive and same reasoning as pseudonymOf; different lifetime. A
+// pseudonym is persisted and must stay comparable for a month, so its salt
+// lives in the database. A fingerprint is never persisted at all and only needs
+// to be comparable within one run, so its secret dies with the process.
+export function fingerprintOf({ value, secret }) {
+  const input = b4a.isBuffer(value) ? value : b4a.from(value, 'hex');
+  const out = b4a.alloc(FINGERPRINT_BYTES);
+  sodium.crypto_generichash(out, input, secret);
   return b4a.toString(out, 'hex');
 }
 
@@ -833,6 +965,50 @@ export function storeProbesRepo(db) {
         persistence,
         delayS,
         decay
+      ),
+    latest: () => stmts.latest.get(),
+    chronological: () => stmts.chronological.all()
+  };
+}
+
+// Inbound RPC load per traffic.mjs run. The insert takes `counts` as an object
+// keyed by command name and expands it in TRAFFIC_COMMAND_COLUMNS order, so the
+// caller never has to know the column order and a missing command reads 0.
+export function trafficRepo(db) {
+  const columns = ['ts', ...TRAFFIC_FIXED_COLUMNS, ...TRAFFIC_COMMAND_COLUMNS];
+  const placeholders = columns.map(() => '?').join(', ');
+  const stmts = {
+    insert: db.prepare(`
+      INSERT OR REPLACE INTO traffic (${columns.join(', ')})
+      VALUES (${placeholders})
+    `),
+    latest: db.prepare('SELECT * FROM traffic ORDER BY ts DESC LIMIT 1'),
+    chronological: db.prepare('SELECT * FROM traffic ORDER BY ts')
+  };
+  return {
+    insert: ({
+      ts,
+      durationS,
+      persistent,
+      firewalled,
+      requests,
+      sources,
+      targets,
+      targetRequests,
+      unknown,
+      counts
+    }) =>
+      stmts.insert.run(
+        ts,
+        durationS,
+        persistent ? 1 : 0,
+        firewalled ? 1 : 0,
+        requests,
+        sources,
+        targets,
+        targetRequests,
+        unknown,
+        ...TRAFFIC_COMMAND_COLUMNS.map((name) => counts[name] ?? 0)
       ),
     latest: () => stmts.latest.get(),
     chronological: () => stmts.chronological.all()

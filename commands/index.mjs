@@ -43,8 +43,8 @@ const PAGES = [
     file: 'timeline.html',
     title: 'timeline',
     blurb:
-      'Time series across crawls: churn, growth, liveness, observed peers ' +
-      'and storage-health decay.',
+      'Time series across crawls: churn, growth, liveness, observed peers, ' +
+      'storage-health decay and inbound request load.',
     command: 'render:timeline',
     offline: true
   },
@@ -55,6 +55,15 @@ const PAGES = [
       'Force graph of the BGP/AS interconnection underlying the nodes. This ' +
       'is the underlay, not DHT overlay links.',
     command: 'render:topo',
+    offline: true
+  },
+  {
+    file: 'stats.html',
+    title: 'stats',
+    blurb:
+      'Deployment status: what each collector last wrote, database size, and ' +
+      'the inbound RPC load this node carries.',
+    command: 'render:stats',
     offline: true
   },
   {

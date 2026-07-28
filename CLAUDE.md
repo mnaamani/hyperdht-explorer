@@ -64,16 +64,21 @@ command is otherwise a small single-purpose unit sharing one SQLite database.
 **All SQL lives in `db.mjs` behind a repository layer.** Commands do NOT call
 `db.prepare(...)` — they instantiate a per-table repo factory
 (`nodesRepo`, `observationsRepo`, `pseudonymsRepo`, `exclusionsRepo`, `geoRepo`,
-`snapshotsRepo`, `storeProbesRepo`, `asTopologyRepo`, `rpkiRepo`) and call its named methods (`nodes.recordSeederEndpoint(...)`,
+`snapshotsRepo`, `storeProbesRepo`, `trafficRepo`, `asTopologyRepo`, `rpkiRepo`) and call its named methods (`nodes.recordSeederEndpoint(...)`,
 `geo.locatedNetworks()`, …). Each factory prepares its statements once per
 instance and reused; the method names read as intent, not SQL. Conventions:
 write methods taking more than a host/port pair take a **single destructured
 options object** (so interchangeable args can't be transposed); placeholders stay
 positional `?` (we don't rely on named-param binding); read helpers feeding a
 JS-side `/24` join return a `Map` keyed by prefix, others return rows/arrays. The
-one sanctioned exception is `commands/stats.mjs`'s generic `COUNT(*)` over a fixed
+one sanctioned exception is `commands/dbreport.mjs`'s generic `COUNT(*)` over a fixed
 table whitelist — documented inline. When adding a query, add a method to the
 relevant repo rather than inlining `db.prepare` in a command.
+
+`commands/dbreport.mjs` is **not a command**: it is the shared read-only collector
+behind `stats` (terminal) and `render:stats` (`stats.html`), so a number on the page
+is the same number the CLI prints by construction rather than by discipline. Add a
+field there, not in one of the two renderers.
 
 **Storage lives OUTSIDE the repo.** `paths.mjs` `dataDir()` resolves to bare-storage's
 `persistent()` root (macOS `~/Library/Application Support`, Linux
@@ -135,6 +140,31 @@ one thing to verify when first cutting a binary.
   `hyperdht/lib/constants.js`) at checkpoints spanning hyperdht's **~20-min record
   TTL** (`defaultMaxAge`) → a decay curve in `store_probes`. A run is ≈22 min, so it
   is scheduled separately (`ops/scheduled-storeprobe.sh`), NOT in the 15-min scan cycle.
+- `commands/traffic.mjs` (`traffic`) — **count-only** inbound RPC load. Wraps
+  `dht.io.onrequest` (NOT `dht.onrequest`, which never sees dht-rpc's internal
+  PING/FIND*NODE/DOWN_HINT — those are answered before delegation; `io.onrequest`
+  is a plain instance property holding an already-bound `dht._onrequest`, so
+  replacing `dht._onrequest` would not work) and tallies `req.command`.
+  **`req.value` is never read, and `req.target` is only ever counted for
+  distinctness** — a stored set of targets would be a topic → announcer-set index,
+  i.e. the deanonymisation capability this project exists not to have; see the long
+  comment at the top of the file and the `project-intent-health-not-deanon` memory.
+  Distinctness goes through `fingerprintOf` (db.mjs) under `newFingerprintSecret()`:
+  random per run, never persisted, `sodium_memzero`'d at the end, so the in-memory
+  set can't be tested against a candidate topic and counts are comparable only
+  \_within* a run. **Application targets only** — `find_node`'s are random-walk probe
+  points, near-all distinct by construction, and would swamp the signal. Nothing
+  per-peer or per-target is persisted, so there is no row to prune or pseudonymise;
+  the in-memory /24 Set likewise exists only to report a cardinality and skips
+  excluded networks. A node is only routable after
+  ~20 min of stability (dht-rpc `STABLE_TICKS`) + a NAT check, so counters **reset**
+  on the `persistent` event and the recorded window is the routable window. Runs
+  that never became routable are stored but excluded from charts. Scheduled
+  separately (`ops/scheduled-traffic.sh`), never in the 15-min scan cycle.
+- `commands/statspage.mjs` (`render:stats`) — emits `stats.html`: collector
+  freshness, db size/rows, and the latest scan/storeprobe/traffic figures. Shares
+  `commands/dbreport.mjs` with the `stats` command. Rendered every scan cycle so
+  the freshness indicators mean something.
 - `commands/summary.mjs` (`render:summary`) — emits `summary.html`, sortable tables by ASN/operator
   and /24 (no CDN; server-rendered rows + vanilla sort/filter JS).
 - `commands/topo.mjs` (`render:topo`) — emits `topology.html`, a D3 (CDN) force graph of the BGP/AS
@@ -228,6 +258,18 @@ one thing to verify when first cutting a binary.
 - `store_probes` — PK `ts`. One row per `storeprobe` run: `canaries`, `put_ok`,
   `get_ok`, `replicas_initial`, `replicas_after`, `persistence`, `delay_s`, and
   `decay` (JSON `[{m,replicas}]` curve across the TTL).
+- `traffic` — PK `ts`. One row per `traffic` run: `duration_s`, `persistent`,
+  `firewalled`, `requests`, `sources` (distinct /24 **count**), `targets` (distinct
+  application-target **count**), `target_requests` (so req/target is derivable),
+  `unknown`, plus one INTEGER counter column per RPC command. Column names live in
+  `TRAFFIC_FIXED_COLUMNS` + `TRAFFIC_COMMAND_COLUMNS` in `db.mjs` (with
+  `TRAFFIC_COMMAND_CLASS` splitting internal routing from application commands), and
+  one migration loop ALTERs in anything an older database lacks, so a counter can't
+  drift from its column. Old rows read NULL for anything that build never counted —
+  the honest value, since NULL means _unmeasured_, not zero. **Consumers must skip
+  NULL rather than render 0** (`targets` especially: pre-existing rows are not
+  "saw no targets"). **Every column is a tally**: no target, no key, no address is
+  stored, which is what makes this the one table with nothing to prune.
 - `as_neighbours` — PK `(asn, neighbour)`. Cached RIPEstat BGP adjacencies for our
   ASNs. `as_names` — PK `asn`, cached AS holder names. Both refetched weekly.
 - `rpki` — PK `prefix24`. RIPEstat RPKI validity: `covering`, `origin_asn`,
