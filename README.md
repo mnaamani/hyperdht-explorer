@@ -161,27 +161,48 @@ once and never again ⇒ transient / dynamic.
 
 ### Pruning (during a scan)
 
-To keep the database reflecting the _live_ network rather than growing forever
-with long-dead endpoints, `scan` prunes stale nodes — any whose `last_seen` is
-older than a cutoff (default **72 hours**):
+A row is a `(host, port)` **endpoint**, not a participant: dht-rpc node ids are
+`hash(ip:port)`, so there is no stable identity to key on, and a node that
+rebinds its UDP source port mints a brand-new row while the old one lingers.
+Left alone that inflates the table with endpoints that answer nothing — one
+observed `/24` accumulated 4,000+ rows of which ~80 responded to a ping. So
+`scan` applies three eviction rules, each disablable by passing `0`:
+
+| rule                                                                        | flag                   | default |
+| --------------------------------------------------------------------------- | ---------------------- | ------- |
+| drop anything not seen in N hours                                           | `--prune-hours`        | 72      |
+| drop endpoints that failed their last probe and have gone quiet for N hours | `--prune-dead-hours`   | 6       |
+| keep at most N endpoints per host                                           | `--max-ports-per-host` | 32      |
+
+The cap keeps what carries signal first — tagged seeders, then endpoints that
+answered their last probe, then the most recently seen — so what it drops is a
+churning host's stalest ports. The dead-endpoint rule only bites once `probe`
+has run — `alive` is NULL until then, and NULL means _unprobed_, not dead — which
+is why the scheduled cycle probes every pass. All three run:
 
 - **At startup**, _before_ the routing table is seeded — so dead nodes from a
   previous run aren't fed back in as bootstrap peers.
 - **Periodically mid-crawl** (every 50 queries) — so long-running scans stay
   trimmed. Nodes seen during the current run have their `last_seen` refreshed, so
-  they're never at risk.
-
-Control it with `--prune-hours`:
+  they're never at risk of the stale rule.
+- **At shutdown**, before the summary and snapshot — so the recorded totals
+  describe the table as it will be read.
 
 ```sh
-bare bin.mjs scan --prune-hours 168   # keep a week instead of 72h
-bare bin.mjs scan --prune-hours 0     # disable pruning entirely
+bare bin.mjs scan --prune-hours 168        # keep a week instead of 72h
+bare bin.mjs scan --prune-hours 0          # disable stale pruning entirely
+bare bin.mjs scan --max-ports-per-host 0   # keep every port a host offers
 ```
 
-The number pruned each run is recorded in the scan summary and in the `snapshots`
+The total pruned each run is recorded in the scan summary and in the `snapshots`
 table. The `geo` cache is **not** pruned — it's keyed by `/24` and reused if a
 network reappears, saving an ip-api lookup. Tagged seeders (`app_seeder`) follow
-the same 72h rule as any other node.
+the same 72h stale rule as any other node, and are only exempt from the per-host
+cap's ranking, not from the cap.
+
+Because of all this, the reports count **hosts** and **endpoints** separately:
+hosts is the honest headline (one churning participant can't steer it), while
+endpoints is what the per-`/24` and per-ASN tables total.
 
 ### Geo-location (`commands/geo.mjs`)
 

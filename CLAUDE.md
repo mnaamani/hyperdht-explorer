@@ -105,6 +105,17 @@ one thing to verify when first cutting a binary.
 
 - `commands/scan.mjs` (`scan`) — random-walk crawler. `HyperDHT extends dht-rpc`, so
   `findNode`/`query`/`ping`/`toArray` are on the `dht` instance directly.
+  **Three eviction rules, not one** (all in `prune()`, run at startup, every 50
+  queries, and once more at shutdown before the summary/snapshot):
+  `--prune-hours` (72) drops anything stale, `--prune-dead-hours` (6) drops
+  endpoints that failed their last probe, `--max-ports-per-host` (32) caps a
+  single host. Each is disabled by `0`. The reason is that a row is a
+  `(host, port)` endpoint and node ids are `hash(ip:port)`, so a node rebinding
+  its UDP port mints a new row every time — one real `/24` reached 4k+ rows with
+  ~80 alive, i.e. the headline count was steerable by one churning participant.
+  Hence also: **pages count hosts and endpoints separately** (`nodes.countHosts()`
+  vs `nodes.count()`); hosts is the headline, endpoints is what the per-`/24` and
+  per-ASN tables total. Keep both when adding a page that reports a node count.
 - `commands/geo.mjs` (`geo`) — ip-api.com batch geo lookup, one query per `/24`.
 - `commands/probe.mjs` (`probe`) — `dht.ping` for liveness + RTT.
 - `commands/seeders.mjs` (`seeders`) — `pear://`/key → discovery key → `dht.lookup` →
@@ -251,7 +262,8 @@ one thing to verify when first cutting a binary.
 
 - `nodes` — PK `(host, port)`. Tracking: `first_seen`, `last_seen`,
   `seen_count`, `sessions`. Probe: `alive`, `rtt_ms`, `last_ping`. Seeders:
-  `app_seeder` (app name tag, else NULL).
+  `app_seeder` (app name tag, else NULL). One row = one **endpoint**, not one
+  participant — see `scan`'s eviction rules above.
 - `geo` — PK `prefix` (the `/24`, e.g. `"143.198.58"`). Cached ip-api result.
 - `snapshots` — PK `ts`. One row per scan run: `total_nodes`, `alive`,
   `new_nodes`, `pruned`, `countries`, `asns`, `seeders`, `median_rtt`. Time series.

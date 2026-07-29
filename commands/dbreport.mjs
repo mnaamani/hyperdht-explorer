@@ -132,7 +132,9 @@ export function collect() {
     count: db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n
   }));
 
-  const breakdown = nodesRepo(db).breakdown();
+  const nodes = nodesRepo(db);
+  const breakdown = nodes.breakdown();
+  const nodesHosts = nodes.countHosts();
   const snapshot = snapshotsRepo(db).latest();
   const storeProbe = storeProbesRepo(db).latest();
   const traffic = trafficRepo(db).latest();
@@ -147,7 +149,10 @@ export function collect() {
     size: { main, wal, shm, total: (main ?? 0) + (wal ?? 0) + (shm ?? 0) },
     rows,
     breakdown,
+    // `nodesTotal` counts (host, port) endpoint rows; `nodesHosts` counts the
+    // distinct hosts behind them. They differ a lot when a node churns ports.
     nodesTotal,
+    nodesHosts,
     snapshot,
     storeProbe,
     traffic,

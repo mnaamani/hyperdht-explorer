@@ -572,7 +572,32 @@ export function nodesRepo(db) {
       'SELECT host, port FROM nodes ORDER BY last_seen DESC'
     ),
     pruneStale: db.prepare('DELETE FROM nodes WHERE last_seen < ?'),
+    // Nodes that failed their last probe age out far sooner than live ones: a
+    // node rebinding its UDP source port leaves a dead (host, port) row behind
+    // on every rebind, and those ghosts otherwise sit in the table for the full
+    // stale window, inflating "known" with endpoints that answer nothing.
+    pruneDead: db.prepare(
+      'DELETE FROM nodes WHERE alive = 0 AND last_seen < ?'
+    ),
+    // Keep at most N endpoints per host. Ranking preserves what carries signal
+    // first (tagged seeders, then endpoints that answered their last probe,
+    // then the most recently seen), so the rows dropped are the stalest ports
+    // of a churning host. `IS 1` rather than `= 1` because `alive` is NULL when
+    // unprobed and NULLs sort FIRST under DESC — the opposite of what we want.
+    capPerHost: db.prepare(`
+      DELETE FROM nodes WHERE rowid IN (
+        SELECT rowid FROM (
+          SELECT rowid, ROW_NUMBER() OVER (
+            PARTITION BY host
+            ORDER BY (app_seeder IS NOT NULL) DESC, (alive IS 1) DESC,
+                     last_seen DESC, sessions DESC
+          ) AS port_rank
+          FROM nodes
+        ) WHERE port_rank > ?
+      )
+    `),
     count: db.prepare('SELECT COUNT(*) AS n FROM nodes'),
+    countHosts: db.prepare('SELECT COUNT(DISTINCT host) AS n FROM nodes'),
     countAlive: db.prepare('SELECT COUNT(*) AS n FROM nodes WHERE alive = 1'),
     countSeeders: db.prepare(
       'SELECT COUNT(*) AS n FROM nodes WHERE app_seeder IS NOT NULL'
@@ -655,7 +680,14 @@ export function nodesRepo(db) {
     byRecency: () => stmts.byRecency.all(),
     // Delete nodes not seen since `cutoff` (epoch ms). Returns rows removed.
     pruneStaleBefore: (cutoff) => stmts.pruneStale.run(cutoff).changes,
+    // Delete endpoints that failed their last probe and haven't been seen
+    // since `cutoff`. Returns rows removed.
+    pruneDeadBefore: (cutoff) => stmts.pruneDead.run(cutoff).changes,
+    // Keep at most `limit` endpoints per host. Returns rows removed.
+    capPortsPerHost: (limit) => stmts.capPerHost.run(limit).changes,
     count: () => stmts.count.get().n,
+    // Distinct hosts — one participant may hold many (host, port) endpoints.
+    countHosts: () => stmts.countHosts.get().n,
     countAlive: () => stmts.countAlive.get().n,
     countSeeders: () => stmts.countSeeders.get().n,
     countWithoutRoutingId: () => stmts.countWithoutRoutingId.get().n,

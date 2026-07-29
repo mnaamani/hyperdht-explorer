@@ -183,7 +183,12 @@ export function run() {
   const probe = report.storeProbe;
 
   const stats = [
-    statCard('nodes known', report.nodesTotal.toLocaleString('en-US')),
+    statCard('hosts known', report.nodesHosts.toLocaleString('en-US')),
+    statCard(
+      'endpoints (host:port)',
+      report.nodesTotal.toLocaleString('en-US'),
+      'one host may rebind many ports'
+    ),
     statCard(
       'alive at last probe',
       (report.breakdown.alive ?? 0).toLocaleString('en-US')

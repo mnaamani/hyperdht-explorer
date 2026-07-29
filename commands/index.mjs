@@ -152,9 +152,14 @@ export function run() {
   const snap = snapshots.latest();
   const total =
     (breakdown.alive ?? 0) + (breakdown.dead ?? 0) + (breakdown.unprobed ?? 0);
+  // Hosts, not rows, is the honest headline: a row is a (host, port) endpoint,
+  // and a single node rebinding its UDP port mints a new one each time — so the
+  // row count is steerable by one churning participant. Both are shown.
+  const hosts = nodes.countHosts();
 
   const stats = [
-    statCard('nodes known', total),
+    statCard('hosts known', hosts),
+    statCard('endpoints (host:port)', total),
     statCard('alive at last probe', breakdown.alive ?? 0),
     statCard('countries', snap?.countries ?? '—'),
     statCard('networks (ASN)', snap?.asns ?? '—'),
@@ -263,8 +268,10 @@ export function run() {
       Counts are what this crawler has <em>seen</em>, not a census — the DHT is
       deliberately non-enumerable, so nodes are discovered by random walk and
       seeders are only those announcing a known public app key. Node ids are
-      <code>hash(ip:port)</code>, not connectable identities. IPv4 only: the
-      protocol carries no IPv6 addresses at the routing layer.
+      <code>hash(ip:port)</code>, not connectable identities — so one host that
+      rebinds its UDP port appears as several endpoints, which is why hosts and
+      endpoints are counted separately. IPv4 only: the protocol carries no IPv6
+      addresses at the routing layer.
       Pages marked <span class="tag cdn">needs internet</span> load map tiles
       from a third party at view time; everything else is served from here, so
       viewing a report discloses nothing to anyone else.

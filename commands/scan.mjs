@@ -31,7 +31,19 @@ import {
 //   bare bin.mjs scan --for 60        crawl for ~60 seconds, then stop cleanly
 //   bare bin.mjs scan --queries 50    crawl until 50 findNode queries, then stop
 //   bare bin.mjs scan --prune-hours N drop nodes not seen in N hours (default 72; 0 disables)
+//   bare bin.mjs scan --prune-dead-hours N   drop endpoints that failed their last
+//                                     probe and haven't been seen in N hours
+//                                     (default 6; 0 disables)
+//   bare bin.mjs scan --max-ports-per-host N keep at most N endpoints per host
+//                                     (default 32; 0 disables)
 //   bare bin.mjs scan <topic-hex>     lookup announcers for a specific topic hash
+//
+// Why three eviction rules and not one: a row is a (host, port) endpoint, and
+// dht-rpc node ids are hash(ip:port), so there is no stable identity to key on.
+// A node that rebinds its UDP source port therefore mints a brand-new row each
+// time and leaves the old one behind — one observed /24 accumulated 4k+ rows of
+// which ~80 answered a ping. The stale window alone can't tell that apart from
+// genuine growth, so dead endpoints age out fast and any single host is capped.
 //
 // Bounded runs (--for / --queries) shut down gracefully and print the summary.
 // This is the reliable way to time/schedule a scan: the Bare runtime in use does
@@ -43,7 +55,13 @@ export async function run(ctx) {
   const argv = ctx.argv;
 
   // Parse `--flag value` options and collect bare positionals from argv[2:].
-  const valueFlags = new Set(['--for', '--queries', '--prune-hours']);
+  const valueFlags = new Set([
+    '--for',
+    '--queries',
+    '--prune-hours',
+    '--prune-dead-hours',
+    '--max-ports-per-host'
+  ]);
   const flags = {};
   const positionals = [];
   for (let i = 2; i < argv.length; i++) {
@@ -60,6 +78,18 @@ export async function run(ctx) {
   // Drop nodes not seen within this many hours (0 disables pruning). Default 72h.
   const pruneHours =
     flags['--prune-hours'] !== undefined ? Number(flags['--prune-hours']) : 72;
+  // Endpoints that failed their last probe are evicted on a much shorter clock
+  // than live ones — see the header note on port churn.
+  const pruneDeadHours =
+    flags['--prune-dead-hours'] !== undefined
+      ? Number(flags['--prune-dead-hours'])
+      : 6;
+  // Ceiling on endpoints kept per host, so one churning node can't dominate the
+  // table (and the headline counts) no matter how fast it rebinds.
+  const maxPortsPerHost =
+    flags['--max-ports-per-host'] !== undefined
+      ? Number(flags['--max-ports-per-host'])
+      : 32;
   const arg = positionals[0]; // optional topic hash
 
   const hex = (buf) => (buf ? b4a.toString(buf, 'hex') : null);
@@ -92,10 +122,13 @@ export async function run(ctx) {
   const geo = geoRepo(db);
   const snapshots = snapshotsRepo(db);
 
-  // Drop stale nodes not seen within pruneHours. Returns number removed.
+  // Eviction. Three rules, each independently disablable with 0, all counted
+  // into prunedThisRun (which the snapshot records).
   // (The geo cache is intentionally left intact — it's keyed by /24 and reusable
   // if a network reappears, saving an ip-api lookup.)
-  function prune() {
+
+  // Nodes not seen within pruneHours, live or not.
+  function pruneStale() {
     if (!(pruneHours > 0)) {
       return 0;
     }
@@ -104,6 +137,43 @@ export async function run(ctx) {
     if (changes) {
       console.log(`pruned ${changes} node(s) not seen in ${pruneHours}h`);
     }
+    return changes;
+  }
+
+  // Endpoints that failed their last probe and have gone quiet since — mostly
+  // abandoned source ports of a node that rebound.
+  function pruneDead() {
+    if (!(pruneDeadHours > 0)) {
+      return 0;
+    }
+    const cutoff = Date.now() - pruneDeadHours * 3600 * 1000;
+    const changes = nodes.pruneDeadBefore(cutoff);
+    if (changes) {
+      console.log(
+        `pruned ${changes} dead endpoint(s) not seen in ${pruneDeadHours}h`
+      );
+    }
+    return changes;
+  }
+
+  // Ceiling per host, so a fast-rebinding node can't outrun the dead-endpoint
+  // clock and swamp the table between probes.
+  function capPorts() {
+    if (!(maxPortsPerHost > 0)) {
+      return 0;
+    }
+    const changes = nodes.capPortsPerHost(maxPortsPerHost);
+    if (changes) {
+      console.log(
+        `dropped ${changes} endpoint(s) over the ${maxPortsPerHost}/host cap`
+      );
+    }
+    return changes;
+  }
+
+  // Returns the total number of rows removed.
+  function prune() {
+    const changes = pruneStale() + pruneDead() + capPorts();
     prunedThisRun += changes;
     return changes;
   }
@@ -237,8 +307,10 @@ export async function run(ctx) {
       } // periodically drop nodes gone stale mid-run
       if (queries % 10 === 0) {
         const total = nodes.count();
+        const hosts = nodes.countHosts();
         console.log(
-          `\n-- ${queries} queries | ${seenThisRun.size} nodes this run | ${total} known all-time --\n`
+          `\n-- ${queries} queries | ${seenThisRun.size} endpoints this run | ` +
+            `${hosts} hosts / ${total} endpoints known --\n`
         );
       }
       if (maxQueries > 0 && queries >= maxQueries) {
@@ -249,8 +321,10 @@ export async function run(ctx) {
 
   function summary() {
     const total = nodes.count();
+    const hosts = nodes.countHosts();
     console.log(
-      `\n=== summary: ${seenThisRun.size} nodes this run, ${total} known all-time, ${queries} queries ===`
+      `\n=== summary: ${seenThisRun.size} endpoints this run, ` +
+        `${hosts} hosts / ${total} endpoints known, ${queries} queries ===`
     );
     console.log('\nmost stable peers (by sessions seen):');
     const rows = nodes.mostStable(15);
@@ -299,7 +373,7 @@ export async function run(ctx) {
       observed
     });
     console.log(
-      `snapshot: ${total} nodes, ${alive} alive, ${newThisRun} new, ${prunedThisRun} pruned, ${countries.size} countries, ${seeders} seeders, ${observed} observed`
+      `snapshot: ${total} endpoints (${nodes.countHosts()} hosts), ${alive} alive, ${newThisRun} new, ${prunedThisRun} pruned, ${countries.size} countries, ${seeders} seeders, ${observed} observed`
     );
   }
 
@@ -316,6 +390,10 @@ export async function run(ctx) {
     }
     shuttingDown = true;
     running = false;
+    // One last eviction pass so the summary and the snapshot describe the table
+    // as it will be read, not as it looked mid-crawl. A churning host can add
+    // hundreds of endpoints between the periodic passes.
+    prune();
     summary();
     if (snapshotOnExit) {
       try {

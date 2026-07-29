@@ -25,6 +25,9 @@ export function run() {
   const breakdown = report.breakdown;
   console.log('\nnodes:');
   console.log(
+    `  ${report.nodesHosts} host(s) · ${report.nodesTotal} endpoint(s)`
+  );
+  console.log(
     `  alive ${breakdown.alive ?? 0} · dead ${breakdown.dead ?? 0}` +
       ` · unprobed ${breakdown.unprobed ?? 0} · seeders ${breakdown.seeders ?? 0}`
   );
